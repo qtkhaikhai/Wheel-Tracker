@@ -455,12 +455,49 @@ tbody td{padding:10px 13px;white-space:nowrap;}
 .sum-feed-amt{font-family:var(--sans);font-weight:600;font-size:12px;min-width:60px;text-align:right;}
 @media (max-width:1100px){.sum-kpi-grid{grid-template-columns:repeat(3,1fr);}.sum-two-col{grid-template-columns:1fr;}}
 @media (max-width:640px){.sum-kpi-grid{grid-template-columns:repeat(2,1fr);}.sum-hero-stats{gap:18px;}.sum-hero-stat-val{font-size:20px;}}
+
+/* PROFILE SELECTOR */
+.profile-overlay{position:fixed;inset:0;background:var(--bg);z-index:2000;display:flex;align-items:center;justify-content:center;}
+.profile-box{background:var(--surface);border:1px solid var(--border2);border-radius:16px;padding:40px 48px;text-align:center;min-width:340px;}
+.profile-title{font-family:var(--sans);font-size:22px;font-weight:800;letter-spacing:-.5px;margin-bottom:6px;}
+.profile-sub{font-size:12px;color:var(--text3);margin-bottom:32px;}
+.profile-cards{display:flex;gap:14px;justify-content:center;margin-bottom:24px;}
+.profile-card{background:var(--surface2);border:2px solid var(--border);border-radius:12px;padding:20px 24px;cursor:pointer;transition:all .15s;min-width:120px;text-align:center;}
+.profile-card:hover{border-color:var(--green);background:var(--green-dim);}
+.profile-card-avatar{width:48px;height:48px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:var(--sans);font-size:20px;font-weight:800;margin:0 auto 10px;}
+.profile-card-name{font-family:var(--sans);font-size:13px;font-weight:600;}
+.profile-add{background:none;border:2px dashed var(--border2);color:var(--text3);font-family:var(--mono);font-size:11px;padding:8px 16px;border-radius:7px;cursor:pointer;transition:all .15s;}
+.profile-add:hover{border-color:var(--green);color:var(--green);}
+.profile-edit-row{display:flex;gap:8px;align-items:center;margin-bottom:8px;}
+.profile-edit-row input{background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:12px;padding:7px 10px;outline:none;flex:1;}
+.profile-edit-row input:focus{border-color:var(--green);}
+.profile-badge{display:inline-flex;align-items:center;gap:6px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:4px 10px 4px 6px;font-size:11px;color:var(--text2);margin-left:8px;}
+.profile-badge-dot{width:8px;height:8px;border-radius:50%;}
 </style>
 </head>
 <body>
 
+<!-- PROFILE SELECTOR OVERLAY -->
+<div class="profile-overlay" id="profile-overlay">
+  <div class="profile-box">
+    <div class="profile-title">Wheel Tracker</div>
+    <div class="profile-sub" id="profile-sub">Who's trading today?</div>
+    <div class="profile-cards" id="profile-cards"></div>
+    <div id="profile-add-area">
+      <button class="profile-add" onclick="showAddProfile()">+ Add profile</button>
+    </div>
+    <div id="profile-new-form" style="display:none;margin-top:16px;">
+      <div class="profile-edit-row">
+        <input type="text" id="profile-new-name" placeholder="Name" maxlength="20"/>
+        <button class="btn-primary" onclick="saveNewProfile()" style="padding:7px 14px;">Add</button>
+        <button class="btn-ghost" onclick="cancelAddProfile()" style="padding:7px 10px;">✕</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <header>
-  <div class="logo"><div class="logo-dot"></div>Wheel Tracker</div>
+  <div class="logo"><div class="logo-dot"></div>Wheel Tracker<span class="profile-badge" id="header-profile-badge" style="display:none;"><span class="profile-badge-dot" id="header-profile-dot"></span><span id="header-profile-name"></span></span></div>
   <nav>
     <button class="active" onclick="showPanel('summary',this)">Dashboard</button>
     <button onclick="showPanel('log',this)">Log</button>
@@ -471,6 +508,7 @@ tbody td{padding:10px 13px;white-space:nowrap;}
     <button onclick="showPanel('settings',this)">Settings</button>
   </nav>
   <div class="hdr-right">
+    <button class="btn-ghost" onclick="switchProfile()" title="Switch profile" id="btn-switch-profile" style="display:none;">⇄ Switch</button>
     <div id="drive-status-bar" style="display:flex;align-items:center;gap:6px;font-size:10px;color:var(--text3);padding:5px 10px;border-radius:5px;border:1px solid var(--border);font-family:var(--mono);cursor:pointer;" onclick="forceSaveToDrive()" title="Click to save to Google Drive">
       <div id="drive-dot" style="width:6px;height:6px;border-radius:50%;background:var(--text3);flex-shrink:0;transition:background .3s;"></div>
       <span id="drive-status-text">↑ Save to Drive</span>
@@ -772,12 +810,130 @@ function renderThemeSwitcher(){
 (function(){ const s=localStorage.getItem('wt-theme')||'dark'; document.documentElement.setAttribute('data-theme',s==='dark'?'':s); })();
 
 // ═══════════════════════════════════════
+//  PROFILE MANAGEMENT
+// ═══════════════════════════════════════
+const PROFILE_COLORS=[
+  {bg:'#00e5a0',text:'#000'},
+  {bg:'#5b8dee',text:'#fff'},
+  {bg:'#ffb830',text:'#000'},
+  {bg:'#ff4d6d',text:'#fff'},
+  {bg:'#a78bfa',text:'#fff'},
+  {bg:'#34d399',text:'#000'},
+];
+
+let _profiles=[];
+let _activeProfile=null;
+
+function _loadProfiles(){
+  try{_profiles=JSON.parse(localStorage.getItem('wt_profiles')||'[]');}catch(e){_profiles=[];}
+}
+function _saveProfiles(){
+  localStorage.setItem('wt_profiles',JSON.stringify(_profiles));
+}
+function _profileDriveFile(profile){
+  return 'wheel-data-'+profile.id+'.json';
+}
+function _initials(name){
+  return name.trim().split(/\s+/).map(w=>w[0]).join('').toUpperCase().slice(0,2);
+}
+
+function renderProfileSelector(){
+  _loadProfiles();
+  const cards=document.getElementById('profile-cards');
+  if(!cards) return;
+  if(!_profiles.length){
+    // First time — show a prompt to create profiles
+    document.getElementById('profile-sub').textContent='Create your first profile to get started';
+    cards.innerHTML='';
+    showAddProfile();
+    return;
+  }
+  document.getElementById('profile-sub').textContent='Who\'s trading today?';
+  cards.innerHTML=_profiles.map((p,i)=>{
+    const col=PROFILE_COLORS[i%PROFILE_COLORS.length];
+    return `<div class="profile-card" onclick="selectProfile('${p.id}')">
+      <div class="profile-card-avatar" style="background:${col.bg};color:${col.text};">${_initials(p.name)}</div>
+      <div class="profile-card-name">${p.name}</div>
+    </div>`;
+  }).join('');
+}
+
+function showAddProfile(){
+  document.getElementById('profile-add-area').style.display='none';
+  document.getElementById('profile-new-form').style.display='block';
+  setTimeout(()=>document.getElementById('profile-new-name').focus(),50);
+}
+function cancelAddProfile(){
+  document.getElementById('profile-new-form').style.display='none';
+  document.getElementById('profile-add-area').style.display='block';
+  document.getElementById('profile-new-name').value='';
+}
+function saveNewProfile(){
+  const name=document.getElementById('profile-new-name').value.trim();
+  if(!name){alert('Please enter a name.');return;}
+  if(_profiles.find(p=>p.name.toLowerCase()===name.toLowerCase())){alert('A profile with that name already exists.');return;}
+  const id='p'+Date.now();
+  _profiles.push({id,name});
+  _saveProfiles();
+  cancelAddProfile();
+  renderProfileSelector();
+}
+document.addEventListener('keydown',e=>{
+  if(e.key==='Enter'&&document.getElementById('profile-new-form').style.display!=='none') saveNewProfile();
+});
+
+function selectProfile(id){
+  const p=_profiles.find(p=>p.id===id);
+  if(!p) return;
+  _activeProfile=p;
+  // Update Drive file target
+  WT_ACTIVE_DRIVE_FILE=_profileDriveFile(p);
+  _driveFileId=null; // reset so we search for this profile's file
+  // Update header badge
+  const idx=_profiles.indexOf(p);
+  const col=PROFILE_COLORS[idx%PROFILE_COLORS.length];
+  const badge=document.getElementById('header-profile-badge');
+  const dot=document.getElementById('header-profile-dot');
+  const nameEl=document.getElementById('header-profile-name');
+  if(badge){badge.style.display='inline-flex';dot.style.background=col.bg;nameEl.textContent=p.name;}
+  const switchBtn=document.getElementById('btn-switch-profile');
+  if(switchBtn) switchBtn.style.display='';
+  // Hide overlay and load data
+  document.getElementById('profile-overlay').style.display='none';
+  _setDriveStatus('saving','Loading '+p.name+'\'s data…');
+  // Reset data to empty before loading profile's Drive data
+  trades=JSON.parse(localStorage.getItem('wt_trades_'+p.id)||'[]');
+  longs=JSON.parse(localStorage.getItem('wt_longs_'+p.id)||'[]');
+  sharePrices=JSON.parse(localStorage.getItem('wt_sp_'+p.id)||'{}');
+  settings=JSON.parse(localStorage.getItem('wt_settings_'+p.id)||'{}');
+  if(!settings.capital) settings.capital=75000;
+  _renderAll();
+  // Then load from Drive (will merge/override with Drive data)
+  _driveReady=false;
+  loadFromDrive(false);
+}
+
+function switchProfile(){
+  // Reset state
+  _activeProfile=null;
+  _driveFileId=null;
+  _driveFolderId=null;
+  _driveReady=false;
+  trades=[];longs=[];sharePrices={};settings={capital:75000};
+  document.getElementById('header-profile-badge').style.display='none';
+  document.getElementById('btn-switch-profile').style.display='none';
+  document.getElementById('profile-overlay').style.display='flex';
+  renderProfileSelector();
+}
+
+// ═══════════════════════════════════════
 //  GOOGLE DRIVE SYNC — GSI implicit grant
 //  Works when opened directly as a file (no server needed)
 // ═══════════════════════════════════════
 const WT_CLIENT_ID='552890631261-3nh1kvvba2kkj53mo7bcbsmfb4tifp13.apps.googleusercontent.com';
 const WT_DRIVE_FOLDER='WheelTracker';
 const WT_DRIVE_FILE='wheel-data.json';
+let WT_ACTIVE_DRIVE_FILE=WT_DRIVE_FILE; // overridden per profile
 
 let _accessToken=null;
 let _tokenExpiry=0;
@@ -857,7 +1013,7 @@ async function _ensureDriveFolder(){
 }
 
 async function _findDriveFile(folderId){
-  const q=encodeURIComponent(`name="${WT_DRIVE_FILE}" and "${folderId}" in parents and trashed=false`);
+  const q=encodeURIComponent(`name="${WT_ACTIVE_DRIVE_FILE}" and "${folderId}" in parents and trashed=false`);
   const list=await _driveReq('GET',`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`);
   return(list.files&&list.files.length>0)?list.files[0].id:null;
 }
@@ -904,19 +1060,21 @@ function _applyDriveData(d){
     const hasClose=t.closeDate&&t.closeDate!=='0'&&t.closeDate!=='null'&&String(t.closeDate).trim()!=='';
     if(hasClose||ctc>0){t.closeFees=ctc>=0.05?0.65:0.01;}
   });
-  localStorage.setItem('wt_trades',JSON.stringify(trades));
-  localStorage.setItem('wt_longs',JSON.stringify(longs));
-  localStorage.setItem('wt_share_prices',JSON.stringify(sharePrices));
-  localStorage.setItem('wt_settings',JSON.stringify(settings));
+  const pid=_activeProfile?_activeProfile.id:'default';
+  localStorage.setItem('wt_trades_'+pid,JSON.stringify(trades));
+  localStorage.setItem('wt_longs_'+pid,JSON.stringify(longs));
+  localStorage.setItem('wt_sp_'+pid,JSON.stringify(sharePrices));
+  localStorage.setItem('wt_settings_'+pid,JSON.stringify(settings));
   if(d.settings&&d.settings.theme) applyTheme(d.settings.theme);
 }
 
 async function _saveToDrive(){
-  // Always save locally first
-  localStorage.setItem('wt_trades',JSON.stringify(trades));
-  localStorage.setItem('wt_longs',JSON.stringify(longs));
-  localStorage.setItem('wt_share_prices',JSON.stringify(sharePrices));
-  localStorage.setItem('wt_settings',JSON.stringify(settings));
+  // Always save locally first using profile-scoped keys
+  const pid=_activeProfile?_activeProfile.id:'default';
+  localStorage.setItem('wt_trades_'+pid,JSON.stringify(trades));
+  localStorage.setItem('wt_longs_'+pid,JSON.stringify(longs));
+  localStorage.setItem('wt_sp_'+pid,JSON.stringify(sharePrices));
+  localStorage.setItem('wt_settings_'+pid,JSON.stringify(settings));
   if(!_accessToken||Date.now()>=_tokenExpiry-60000){
     _setDriveStatus('idle','Saved locally (sign in to sync Drive)');
     return;
@@ -925,7 +1083,7 @@ async function _saveToDrive(){
   try{
     const payload=_buildPayload();
     const boundary='wt'+Date.now();
-    const meta=JSON.stringify({name:WT_DRIVE_FILE,...(!_driveFileId&&_driveFolderId?{parents:[_driveFolderId]}:{})});
+    const meta=JSON.stringify({name:WT_ACTIVE_DRIVE_FILE,...(!_driveFileId&&_driveFolderId?{parents:[_driveFolderId]}:{})});
     const body='--'+boundary+'\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n'+meta+'\r\n--'+boundary+'\r\nContent-Type: application/json\r\n\r\n'+payload+'\r\n--'+boundary+'--';
     const method=_driveFileId?'PATCH':'POST';
     const url=_driveFileId
@@ -4001,34 +4159,12 @@ async function refreshYahooPrices(){
 }
 
 // ═══════════════════════════════════════
-//  INIT — start from localStorage, connect Drive when GSI ready
+//  INIT — show profile selector, then load data
 // ═══════════════════════════════════════
-_setDriveStatus('idle','Click ↑ Save to sync Drive');
+_setDriveStatus('idle','Select a profile to start');
 
-// Render immediately from localStorage so app is usable right away
-try{renderLog();}catch(e){console.error('renderLog:',e);}
-try{renderDerived();}catch(e){console.error('renderDerived:',e);}
-try{renderSettings();}catch(e){console.error('renderSettings:',e);}
-try{renderHistory();}catch(e){console.error('renderHistory:',e);}
-try{renderSummary();}catch(e){console.error('renderSummary:',e);}
-
-// Once GSI library loads, auto-load from Drive (silent if not signed in yet)
-function _onGsiReady(){
-  _initTokenClient();
-  // Try a silent token request (no popup) — works if user already granted access this session
-  if(_tokenClient){
-    _driveReady=false;
-    _setDriveStatus('saving','Checking Drive…');
-    _tokenClient.requestAccessToken({prompt:''});
-    // Give it 3 seconds; if no token comes back, fall back gracefully
-    setTimeout(()=>{
-      if(!_driveReady){
-        _driveReady=true;
-        _setDriveStatus('idle','Click ↑ Save to sync Drive');
-      }
-    },3000);
-  }
-}
+// Show profile selector on load
+renderProfileSelector();
 
 // Poll for GSI to be available (it loads async)
 let _gsiCheckCount=0;
@@ -4036,9 +4172,9 @@ const _gsiInterval=setInterval(()=>{
   _gsiCheckCount++;
   if(window.google&&window.google.accounts){
     clearInterval(_gsiInterval);
-    _onGsiReady();
+    _initTokenClient();
   }
-  if(_gsiCheckCount>30) clearInterval(_gsiInterval); // give up after 15s
+  if(_gsiCheckCount>30) clearInterval(_gsiInterval);
 },500);
 
 </script>
