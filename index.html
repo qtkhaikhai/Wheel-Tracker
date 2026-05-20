@@ -1659,34 +1659,28 @@ function _renderSummaryInner(container){
     }
   });
 
-  // ── UNREALIZED: open trades opened in this calendar month
-  const openByDay={};
-  openAll.forEach(t=>{
-    if(!t.openDate) return;
-    const d=new Date(t.openDate+'T12:00:00');
-    if(d.getFullYear()===calY && d.getMonth()===calM){
-      const day=d.getDate();
-      const k=parseInt(t.contracts)||1;
-      const prem=(parseFloat(t.premium)||0)*k*100-(parseFloat(t.openFees)||0);
-      if(!openByDay[day]) openByDay[day]={prem:0,count:0};
-      openByDay[day].prem+=prem;
-      openByDay[day].count++;
-    }
+  // ── EXPECTED: sum premiums of open trades whose expDate falls in this calendar month
+  const calExpectedTotal=openAll.reduce((s,t)=>{
+    if(!t.expDate) return s;
+    const d=new Date(t.expDate+'T12:00:00');
+    if(d.getFullYear()!==calY || d.getMonth()!==calM) return s;
+    const k=parseInt(t.contracts)||1;
+    return s+(parseFloat(t.premium)||0)*k*100-(parseFloat(t.openFees)||0);
+  },0);
+  const calHasOpen=openAll.some(t=>{
+    if(!t.expDate) return false;
+    const d=new Date(t.expDate+'T12:00:00');
+    return d.getFullYear()===calY && d.getMonth()===calM;
   });
 
   // build weekly totals: group days into Sun-Sat rows
-  const weeklyTotals={}; // weekIndex -> {pl, hasPl, prem, hasPrem}
+  const weeklyTotals={}; // weekIndex -> {pl, hasPl}
   for(let d=1;d<=daysInMo;d++){
     const weekIdx=Math.floor((firstDow+d-1)/7);
     if(eventsByDay[d]){
-      if(!weeklyTotals[weekIdx]) weeklyTotals[weekIdx]={pl:0,hasPl:false,prem:0,hasPrem:false};
+      if(!weeklyTotals[weekIdx]) weeklyTotals[weekIdx]={pl:0,hasPl:false};
       weeklyTotals[weekIdx].pl+=eventsByDay[d].pl;
       weeklyTotals[weekIdx].hasPl=true;
-    }
-    if(openByDay[d]){
-      if(!weeklyTotals[weekIdx]) weeklyTotals[weekIdx]={pl:0,hasPl:false,prem:0,hasPrem:false};
-      weeklyTotals[weekIdx].prem+=openByDay[d].prem;
-      weeklyTotals[weekIdx].hasPrem=true;
     }
   }
 
@@ -1697,24 +1691,21 @@ function _renderSummaryInner(container){
   const todayDate=new Date();
   for(let d=1;d<=daysInMo;d++){
     const ev=eventsByDay[d];
-    const op=openByDay[d];
     const dow=(firstDow+d-1)%7;
     const weekIdx=Math.floor((firstDow+d-1)/7);
     const isToday=todayDate.getFullYear()===calY&&todayDate.getMonth()===calM&&todayDate.getDate()===d;
-    const cls='sum-cal-day'+(ev?' has-event':'')+(op&&!ev?' has-open':'')+(isToday?' today':'');
+    const cls='sum-cal-day'+(ev?' has-event':'')+(isToday?' today':'');
     const dKey=calY+'-'+String(calM+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');
-    const interactiveAttrs=(ev||op)?` onmouseenter="showCalTooltip('${dKey}')" onmousemove="moveCalTooltip(event)" onmouseleave="hideCalTooltip()" onclick="hideCalTooltip();showDayDrilldown('${dKey}')" style="cursor:pointer;"`:'';
+    const interactiveAttrs=ev?` onmouseenter="showCalTooltip('${dKey}')" onmousemove="moveCalTooltip(event)" onmouseleave="hideCalTooltip()" onclick="hideCalTooltip();showDayDrilldown('${dKey}')" style="cursor:pointer;"`:'';
     // if Saturday, replace with week total cell
     if(dow===6){
       const wt=weeklyTotals[weekIdx];
       dayCells.push(`<div class="sum-cal-day" style="background:var(--surface2);border:1px solid var(--border2);display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px;">
         <span style="font-size:8px;letter-spacing:.06em;text-transform:uppercase;color:var(--text3);font-family:var(--sans);">Wk Total</span>
-        ${wt&&wt.hasPl?`<span style="font-family:var(--sans);font-weight:700;font-size:11px;" class="${wt.pl>=0?'tg':'tr'}">${fm(wt.pl)}</span>`:''}
-        ${wt&&wt.hasPrem?`<span style="font-family:var(--sans);font-weight:600;font-size:10px;color:var(--amber);opacity:.85;">~${fm(wt.prem)}</span>`:''}
-        ${!(wt&&wt.hasPl)&&!(wt&&wt.hasPrem)?`<span class="td">—</span>`:''}
+        <span style="font-family:var(--sans);font-weight:700;font-size:11px;" class="${wt&&wt.hasPl?(wt.pl>=0?'tg':'tr'):'td'}">${wt&&wt.hasPl?fm(wt.pl):'—'}</span>
       </div>`);
     } else {
-      dayCells.push(`<div class="${cls}"${interactiveAttrs}><span class="sum-cal-num">${d}</span>${ev?`<span class="sum-cal-val ${ev.pl>=0?'tg':'tr'}">${fm(ev.pl)}</span>`:''}${op?`<span class="sum-cal-val" style="color:var(--amber);opacity:.85;font-size:10px;">~${fm(op.prem)}</span>`:''}</div>`);
+      dayCells.push(`<div class="${cls}"${interactiveAttrs}><span class="sum-cal-num">${d}</span>${ev?`<span class="sum-cal-val ${ev.pl>=0?'tg':'tr'}">${fm(ev.pl)}</span>`:''}</div>`);
     }
   }
   // fill remaining cells in last row (no trailing Saturdays needed since they're week totals)
@@ -1728,16 +1719,12 @@ function _renderSummaryInner(container){
     for(let i=0;i<emptiesNeeded;i++) dayCells.push('<div class="sum-cal-day empty"></div>');
     dayCells.push(`<div class="sum-cal-day" style="background:var(--surface2);border:1px solid var(--border2);display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px;">
       <span style="font-size:8px;letter-spacing:.06em;text-transform:uppercase;color:var(--text3);font-family:var(--sans);">Wk Total</span>
-      ${wt&&wt.hasPl?`<span style="font-family:var(--sans);font-weight:700;font-size:11px;" class="${wt.pl>=0?'tg':'tr'}">${fm(wt.pl)}</span>`:''}
-      ${wt&&wt.hasPrem?`<span style="font-family:var(--sans);font-weight:600;font-size:10px;color:var(--amber);opacity:.85;">~${fm(wt.prem)}</span>`:''}
-      ${!(wt&&wt.hasPl)&&!(wt&&wt.hasPrem)?`<span class="td">—</span>`:''}
+      <span style="font-family:var(--sans);font-weight:700;font-size:11px;" class="${wt&&wt.hasPl?(wt.pl>=0?'tg':'tr'):'td'}">${wt&&wt.hasPl?fm(wt.pl):'—'}</span>
     </div>`);
   }
   const calMonthLbl=MONTHS[calM]+' '+calY;
   const calMonthTotal=Object.values(eventsByDay).reduce((s,e)=>s+e.pl,0);
-  const calExpectedTotal=Object.values(openByDay).reduce((s,e)=>s+e.prem,0);
   const calHasTrades=Object.keys(eventsByDay).length>0;
-  const calHasOpen=Object.keys(openByDay).length>0;
   const calendar=`
     <div class="sum-panel">
       <div class="sum-panel-hdr">
@@ -1749,11 +1736,7 @@ function _renderSummaryInner(container){
           </span>`:''}
           ${calHasOpen?`<span style="display:flex;align-items:center;gap:5px;">
             <span style="font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--text3);font-family:var(--sans);">Expected</span>
-            <span style="font-family:var(--sans);font-size:13px;font-weight:700;color:var(--amber);">~${fm(calExpectedTotal)}</span>
-          </span>`:''}
-          ${calHasTrades&&calHasOpen?`<span style="display:flex;align-items:center;gap:5px;">
-            <span style="font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--text3);font-family:var(--sans);">Total</span>
-            <span style="font-family:var(--sans);font-size:13px;font-weight:700;color:var(--blue);">${fm(calMonthTotal+calExpectedTotal)}</span>
+            <span style="font-family:var(--sans);font-size:13px;font-weight:700;color:var(--blue);">${fm(calExpectedTotal)}</span>
           </span>`:''}
         </span>
         <div class="sum-cal-month-nav">
@@ -1761,10 +1744,6 @@ function _renderSummaryInner(container){
           <span class="sum-cal-month-lbl">${calMonthLbl}</span>
           <button onclick="shiftSummaryCalMonth(1)">›</button>
         </div>
-      </div>
-      <div style="display:flex;gap:12px;padding:8px 14px 0;font-size:10px;color:var(--text3);">
-        <span style="display:flex;align-items:center;gap:4px;"><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--green);opacity:.7;"></span>Realized P&L</span>
-        <span style="display:flex;align-items:center;gap:4px;"><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--amber);opacity:.7;"></span>Expected (open)</span>
       </div>
       <div class="sum-cal">${dayCells.join('')}</div>
     </div>`;
