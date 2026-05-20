@@ -1659,18 +1659,17 @@ function _renderSummaryInner(container){
     }
   });
 
-  // ── EXPECTED: sum premiums of trades that settled (or will settle) in this calendar month.
-  // For closed trades: anchor to closeDate (same as Realized). For open trades: anchor to expDate.
+  // ── EXPECTED: raw premium * contracts * 100 for every trade whose expDate falls in this month
   const calExpectedTotal=trades.reduce((s,t)=>{
-    const anchor=cd(t)||t.expDate; if(!anchor) return s;
-    const d=new Date(anchor+'T12:00:00');
+    if(!t.expDate) return s;
+    const d=new Date(t.expDate+'T12:00:00');
     if(d.getFullYear()!==calY || d.getMonth()!==calM) return s;
     const k=parseInt(t.contracts)||1;
-    return s+(parseFloat(t.premium)||0)*k*100-(parseFloat(t.openFees)||0);
+    return s+(parseFloat(t.premium)||0)*k*100;
   },0);
   const calHasOpen=trades.some(t=>{
-    const anchor=cd(t)||t.expDate; if(!anchor) return false;
-    const d=new Date(anchor+'T12:00:00');
+    if(!t.expDate) return false;
+    const d=new Date(t.expDate+'T12:00:00');
     return d.getFullYear()===calY && d.getMonth()===calM;
   });
 
