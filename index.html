@@ -886,9 +886,8 @@ function selectProfile(id){
   const p=_profiles.find(p=>p.id===id);
   if(!p) return;
   _activeProfile=p;
-  // Update Drive file target
   WT_ACTIVE_DRIVE_FILE=_profileDriveFile(p);
-  _driveFileId=null; // reset so we search for this profile's file
+  _driveFileId=null;
   // Update header badge
   const idx=_profiles.indexOf(p);
   const col=PROFILE_COLORS[idx%PROFILE_COLORS.length];
@@ -898,19 +897,29 @@ function selectProfile(id){
   if(badge){badge.style.display='inline-flex';dot.style.background=col.bg;nameEl.textContent=p.name;}
   const switchBtn=document.getElementById('btn-switch-profile');
   if(switchBtn) switchBtn.style.display='';
-  // Hide overlay and load data
+  // Hide overlay
   document.getElementById('profile-overlay').style.display='none';
-  _setDriveStatus('saving','Loading '+p.name+'\'s data…');
-  // Reset data to empty before loading profile's Drive data
+  // Load local data for this profile first so app is immediately usable
   trades=JSON.parse(localStorage.getItem('wt_trades_'+p.id)||'[]');
   longs=JSON.parse(localStorage.getItem('wt_longs_'+p.id)||'[]');
   sharePrices=JSON.parse(localStorage.getItem('wt_sp_'+p.id)||'{}');
   settings=JSON.parse(localStorage.getItem('wt_settings_'+p.id)||'{}');
   if(!settings.capital) settings.capital=75000;
   _renderAll();
-  // Then load from Drive (will merge/override with Drive data)
+  // Now try to sync with Drive (will prompt sign-in if needed)
   _driveReady=false;
-  loadFromDrive(false);
+  if(_accessToken&&Date.now()<_tokenExpiry-60000){
+    // Already have a valid token — load straight away
+    loadFromDrive(false);
+  } else if(_tokenClient){
+    // Request token silently first; callback will call loadFromDrive if it succeeds
+    _setDriveStatus('saving','Connecting to Drive…');
+    _tokenClient.requestAccessToken({prompt:''});
+    setTimeout(()=>{if(!_driveReady){_driveReady=true;_setDriveStatus('idle','Click ↑ Save to Drive');}},4000);
+  } else {
+    _driveReady=true;
+    _setDriveStatus('idle','Click ↑ Save to Drive');
+  }
 }
 
 function switchProfile(){
@@ -969,8 +978,9 @@ function _initTokenClient(){
       _accessToken=resp.access_token;
       _tokenExpiry=Date.now()+(parseInt(resp.expires_in||3600)*1000);
       if(_tokenResolve){_tokenResolve({token:resp.access_token});_tokenResolve=null;}
-      // If this was a silent/auto sign-in (no pending resolve), load from Drive
-      else if(!_driveReady){ loadFromDrive(false); }
+      // Only auto-load from Drive if a profile is already selected
+      else if(!_driveReady&&_activeProfile){ loadFromDrive(false); }
+      else if(!_driveReady){ _driveReady=true; }
     }
   });
 }
