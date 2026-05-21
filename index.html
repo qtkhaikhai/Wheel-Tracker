@@ -3099,27 +3099,25 @@ function hideCalTooltip(){
 function renderShares(){
   const container=document.getElementById('shares-content');
 
-  // Build share inventory: assigned puts add shares, assigned calls remove them
-  // Group by ticker+set to track the wheel lifecycle
-  const inventory={};  // key: ticker -> net shares info
-
-  // First pass: all assigned puts → add shares
+  // ── Pass 1: assigned puts → add wheel lots per ticker
+  const inventory={};
   trades.filter(t=>t.type==='P'&&t.assigned==='Yes'&&t.ticker).forEach(t=>{
     const k=t.ticker;
     if(!inventory[k]) inventory[k]={ticker:k,lots:[],calledAway:[]};
-    const shares=(parseInt(t.contracts)||1)*100;
+    const contracts=parseInt(t.contracts)||1;
+    const shares=contracts*100;
     const strike=parseFloat(t.strike)||0;
-    const premiumPut=(parseFloat(t.premium)||0)*(parseInt(t.contracts)||1)*100;
+    const premiumPut=(parseFloat(t.premium)||0)*contracts*100;
     const openFees=parseFloat(t.openFees)||0;
     const costBasis=strike-(premiumPut-openFees)/shares;
     inventory[k].lots.push({
-      shares, strike, contracts:parseInt(t.contracts)||1,
+      type:'wheel', shares, strike, contracts,
       costBasis, premiumPut, openFees,
-      assignDate:cd(t)||t.expDate, set:t.set, id:t.id
+      assignDate:cd(t)||t.expDate, set:parseInt(t.set)||1, id:t.id
     });
   });
 
-  // Second pass: assigned calls on same ticker → call away shares (FIFO by assign date)
+  // ── Pass 2: assigned calls → remove shares FIFO
   trades.filter(t=>t.type==='C'&&t.assigned==='Yes'&&t.ticker&&inventory[t.ticker]).forEach(t=>{
     const k=t.ticker;
     const callShares=(parseInt(t.contracts)||1)*100;
@@ -3127,137 +3125,176 @@ function renderShares(){
     const premiumCall=(parseFloat(t.premium)||0)*(parseInt(t.contracts)||1)*100;
     const callFees=(parseFloat(t.openFees)||0)+(parseFloat(t.closeFees)||0);
     let toRemove=callShares;
-    // remove from lots FIFO
     inventory[k].lots=[...inventory[k].lots].map(lot=>{
       if(toRemove<=0) return lot;
       if(lot.shares<=toRemove){
-        const gain=(callStrike-lot.costBasis)*lot.shares + premiumCall - callFees;
-        inventory[k].calledAway.push({...lot, callStrike, callDate:cd(t)||t.expDate, premiumCall, gain});
-        toRemove-=lot.shares;
-        return null;
+        const gain=(callStrike-lot.costBasis)*lot.shares+premiumCall-callFees;
+        inventory[k].calledAway.push({...lot,callStrike,callDate:cd(t)||t.expDate,premiumCall,gain});
+        toRemove-=lot.shares; return null;
       } else {
-        const partial={...lot, shares:lot.shares-toRemove};
-        const gain=(callStrike-lot.costBasis)*toRemove + premiumCall - callFees;
-        inventory[k].calledAway.push({...lot, shares:toRemove, callStrike, callDate:cd(t)||t.expDate, premiumCall, gain});
-        toRemove=0;
-        return partial;
+        const partial={...lot,shares:lot.shares-toRemove};
+        const gain=(callStrike-lot.costBasis)*toRemove+premiumCall-callFees;
+        inventory[k].calledAway.push({...lot,shares:toRemove,callStrike,callDate:cd(t)||t.expDate,premiumCall,gain});
+        toRemove=0; return partial;
       }
     }).filter(Boolean);
   });
 
-  // Only show tickers where net shares > 0
+  // ── Pass 3: merge long positions into matching ticker+set, or create standalone entry
+  const validLongs=longs.filter(l=>l.ticker&&l.shares&&l.price);
+  const standaloneLongs=[]; // longs for tickers with no wheel inventory
+  validLongs.forEach(l=>{
+    const k=l.ticker;
+    const longSet=parseInt(l.set)||1;
+    if(inventory[k]){
+      // Inject as a long lot into the existing ticker group
+      inventory[k].lots.push({
+        type:'long', shares:parseFloat(l.shares)||0,
+        strike:parseFloat(l.price)||0,   // price paid = "strike equivalent"
+        contracts:null,
+        costBasis:parseFloat(l.price)||0,
+        premiumPut:0, openFees:0,
+        assignDate:l.date, set:longSet, id:l.id,
+        longNotes:l.notes||''
+      });
+    } else {
+      standaloneLongs.push(l);
+    }
+  });
+
   const held=Object.values(inventory).filter(g=>g.lots.length>0).sort((a,b)=>a.ticker.localeCompare(b.ticker));
   const calledAway=Object.values(inventory).filter(g=>g.calledAway.length>0).sort((a,b)=>a.ticker.localeCompare(b.ticker));
 
-  // longs from Long tab
-  const longRows=longs.filter(l=>l.ticker&&l.shares&&l.price);
-
-  if(!held.length&&!calledAway.length&&!longRows.length){
-    container.innerHTML=`<div class="empty-state"><div class="empty-title">No assigned shares</div><div>Assigned puts and Long positions will appear here</div></div>`;
+  if(!held.length&&!calledAway.length&&!standaloneLongs.length&&!validLongs.length){
+    container.innerHTML='<div class="empty-state"><div class="empty-title">No assigned shares</div><div>Assigned puts and Long positions will appear here</div></div>';
     return;
   }
 
   let html='';
 
-  // ── Currently held shares
-  if(held.length||longRows.length){
+  // ── Section: Shares Held (wheel + integrated longs)
+  if(held.length||standaloneLongs.length){
+    // Grand totals include all lot types
     const totalShares=held.reduce((s,g)=>s+g.lots.reduce((ss,l)=>ss+l.shares,0),0);
     const totalAdjCost=held.reduce((s,g)=>s+g.lots.reduce((ss,l)=>ss+l.shares*l.costBasis,0),0);
+    const saShares=standaloneLongs.reduce((s,l)=>s+(parseFloat(l.shares)||0),0);
+    const saAdjCost=standaloneLongs.reduce((s,l)=>s+(parseFloat(l.shares)||0)*(parseFloat(l.price)||0),0);
+    const grandTotalShares=totalShares+saShares;
+    const grandAdjCost=totalAdjCost+saAdjCost;
 
     const rows=held.map(g=>{
       const totalGrpShares=g.lots.reduce((s,l)=>s+l.shares,0);
-      const totalGrpPremium=g.lots.reduce((s,l)=>s+l.premiumPut,0);
-      const avgCostBasis=g.lots.reduce((s,l)=>s+l.costBasis*l.shares,0)/totalGrpShares;
-      const avgStrike=g.lots.reduce((s,l)=>s+l.strike*l.shares,0)/totalGrpShares;
+      const totalGrpPremium=g.lots.filter(l=>l.type==='wheel').reduce((s,l)=>s+l.premiumPut,0);
+      const avgCostBasis=totalGrpShares>0?g.lots.reduce((s,l)=>s+l.costBasis*l.shares,0)/totalGrpShares:0;
+      const avgStrike=totalGrpShares>0?g.lots.filter(l=>l.type==='wheel').reduce((s,l)=>s+l.strike*l.shares,0)/
+        (g.lots.filter(l=>l.type==='wheel').reduce((s,l)=>s+l.shares,0)||1):0;
+      const totalLots=g.lots.length;
+      const hasLong=g.lots.some(l=>l.type==='long');
 
-      const lotRows=g.lots.map(l=>`
-        <tr style="background:var(--surface2);font-size:11px;">
-          <td style="padding:6px 13px 6px 26px;color:var(--text3);">└ Set ${l.set}</td>
-          <td style="padding:6px 13px;color:var(--text3);">${l.contracts}K</td>
-          <td style="padding:6px 13px;">${l.shares.toLocaleString()}</td>
-          <td style="padding:6px 13px;">$${l.strike.toFixed(2)}</td>
-          <td style="padding:6px 13px;" class="tg">${fm(l.premiumPut)}</td>
-          <td style="padding:6px 13px;" class="ta">$${l.costBasis.toFixed(2)}</td>
-          <td style="padding:6px 13px;" class="td">${fd(l.assignDate)}</td>
-          <td style="padding:6px 13px;color:var(--text3);">—</td>
-        </tr>`).join('');
+      // Sort lots: wheel lots by set asc, then long lots by set
+      const sortedLots=[...g.lots].sort((a,b)=>a.set-b.set||(a.type==='long'?1:-1));
 
-      return `<tr>
-        <td><span class="ticker">${g.ticker}</span></td>
-        <td>${g.lots.length} lot${g.lots.length!==1?'s':''}</td>
-        <td style="font-weight:500;">${totalGrpShares.toLocaleString()}</td>
-        <td>$${avgStrike.toFixed(2)}</td>
-        <td class="tg">${fm(totalGrpPremium)}</td>
-        <td class="ta">$${avgCostBasis.toFixed(2)}</td>
-        <td class="td">${g.lots.length===1?fd(g.lots[0].assignDate):'Multiple'}</td>
-        <td style="font-size:11px;color:var(--text3);">Break-even: $${avgCostBasis.toFixed(2)}</td>
-      </tr>${lotRows}`;
+      const lotRows=sortedLots.map(l=>{
+        if(l.type==='long'){
+          return '<tr style="background:var(--surface2);font-size:11px;">'+
+            '<td style="padding:6px 13px 6px 26px;">'+
+              '└ <span style="color:var(--blue);background:var(--blue-dim);padding:1px 6px;border-radius:3px;font-size:9px;letter-spacing:.06em;">LONG</span>'+
+              ' <span style="color:var(--text3);">Set '+l.set+'</span>'+
+            '</td>'+
+            '<td style="padding:6px 13px;color:var(--text3);">manual</td>'+
+            '<td style="padding:6px 13px;">'+Number(l.shares).toLocaleString()+'</td>'+
+            '<td style="padding:6px 13px;">$'+l.costBasis.toFixed(2)+'</td>'+
+            '<td style="padding:6px 13px;color:var(--text3);">—</td>'+
+            '<td style="padding:6px 13px;" class="ta">$'+l.costBasis.toFixed(2)+'</td>'+
+            '<td style="padding:6px 13px;" class="td">'+fd(l.assignDate)+'</td>'+
+            '<td style="padding:6px 13px;color:var(--text3);">'+( l.longNotes||'—')+'</td>'+
+          '</tr>';
+        }
+        // wheel lot
+        const cStr=l.contracts+' contract'+(l.contracts!==1?'s':'');
+        return '<tr style="background:var(--surface2);font-size:11px;">'+
+          '<td style="padding:6px 13px 6px 26px;color:var(--text3);">└ Set '+l.set+'</td>'+
+          '<td style="padding:6px 13px;color:var(--text3);">'+cStr+'</td>'+
+          '<td style="padding:6px 13px;">'+l.shares.toLocaleString()+'</td>'+
+          '<td style="padding:6px 13px;">$'+l.strike.toFixed(2)+'</td>'+
+          '<td style="padding:6px 13px;" class="tg">'+fm(l.premiumPut)+'</td>'+
+          '<td style="padding:6px 13px;" class="ta">$'+l.costBasis.toFixed(2)+'</td>'+
+          '<td style="padding:6px 13px;" class="td">'+fd(l.assignDate)+'</td>'+
+          '<td style="padding:6px 13px;color:var(--text3);">—</td>'+
+        '</tr>';
+      }).join('');
+
+      const longBadge=hasLong?'<span style="font-size:9px;color:var(--blue);background:var(--blue-dim);padding:1px 5px;border-radius:3px;margin-left:5px;letter-spacing:.05em;">+LONG</span>':'';
+
+      return '<tr>'+
+        '<td><span class="ticker">'+g.ticker+'</span>'+longBadge+'</td>'+
+        '<td>'+totalLots+' lot'+(totalLots!==1?'s':'')+'</td>'+
+        '<td style="font-weight:500;">'+totalGrpShares.toLocaleString()+'</td>'+
+        '<td>$'+avgCostBasis.toFixed(2)+'</td>'+
+        '<td class="tg">'+fm(totalGrpPremium)+'</td>'+
+        '<td class="ta">$'+avgCostBasis.toFixed(2)+'</td>'+
+        '<td class="td">'+( totalLots===1?fd(g.lots[0].assignDate):'Multiple')+'</td>'+
+        '<td style="font-size:11px;color:var(--text3);">Break-even: $'+avgCostBasis.toFixed(2)+'</td>'+
+      '</tr>'+lotRows;
     }).join('');
 
-    // Long tab rows appended to assigned
-    const longHeldRows=longRows.map(l=>`
-      <tr>
-        <td><span class="ticker">${l.ticker}</span> <span style="font-size:10px;color:var(--blue);background:var(--blue-dim);padding:1px 6px;border-radius:3px;margin-left:4px;">LONG</span></td>
-        <td>Set ${l.set||1}</td>
-        <td style="font-weight:500;">${Number(l.shares).toLocaleString()}</td>
-        <td>$${parseFloat(l.price).toFixed(2)}</td>
-        <td class="td">—</td>
-        <td class="ta">$${parseFloat(l.price).toFixed(2)}</td>
-        <td class="td">${fd(l.date)}</td>
-        <td style="font-size:11px;color:var(--text3);">${l.notes||'—'}</td>
-      </tr>`).join('');
+    // Standalone longs (no matching wheel ticker)
+    const saRows=standaloneLongs.map(l=>
+      '<tr>'+
+        '<td><span class="ticker">'+l.ticker+'</span> <span style="font-size:10px;color:var(--blue);background:var(--blue-dim);padding:1px 6px;border-radius:3px;margin-left:4px;">LONG</span></td>'+
+        '<td>Set '+(parseInt(l.set)||1)+'</td>'+
+        '<td style="font-weight:500;">'+Number(l.shares).toLocaleString()+'</td>'+
+        '<td>$'+parseFloat(l.price).toFixed(2)+'</td>'+
+        '<td class="td">—</td>'+
+        '<td class="ta">$'+parseFloat(l.price).toFixed(2)+'</td>'+
+        '<td class="td">'+fd(l.date)+'</td>'+
+        '<td style="font-size:11px;color:var(--text3);">'+( l.notes||'—')+'</td>'+
+      '</tr>'
+    ).join('');
 
-    const longShares=longRows.reduce((s,l)=>s+(parseFloat(l.shares)||0),0);
-    const longAdjCost=longRows.reduce((s,l)=>s+(parseFloat(l.shares)||0)*(parseFloat(l.price)||0),0);
-    const grandTotalShares=totalShares+longShares;
-    const grandAdjCost=totalAdjCost+longAdjCost;
-
-    html+=`
-      <div class="sec-hdr">
-        <span class="sec-title">Shares Held</span>
-        <span class="td" style="font-size:11px;">${grandTotalShares.toLocaleString()} shares · ${fm(grandAdjCost)} adj. cost basis</span>
-      </div>
-      <div class="tbl-wrap">
-        <table>
-          <thead><tr>
-            <th>Ticker</th><th>Lots / Set</th><th>Shares</th><th>Avg Strike / Price</th>
-            <th>Premium Received</th><th>Adj. Cost Basis</th><th>Date</th><th>Notes</th>
-          </tr></thead>
-          <tbody>${rows}${longHeldRows}</tbody>
-        </table>
-      </div>`;
+    html+=
+      '<div class="sec-hdr">'+
+        '<span class="sec-title">Shares Held</span>'+
+        '<span class="td" style="font-size:11px;">'+grandTotalShares.toLocaleString()+' shares · '+fm(grandAdjCost)+' adj. cost basis</span>'+
+      '</div>'+
+      '<div class="tbl-wrap"><table>'+
+        '<thead><tr>'+
+          '<th>Ticker</th><th>Lots / Set</th><th>Shares</th><th>Avg Cost Basis</th>'+
+          '<th>Premium Received</th><th>Adj. Cost Basis</th><th>Date</th><th>Notes</th>'+
+        '</tr></thead>'+
+        '<tbody>'+rows+saRows+'</tbody>'+
+      '</table></div>';
   }
 
-  // ── Shares called away
+  // ── Section: Called Away
   if(calledAway.length){
-    const caRows=calledAway.map(g=>{
-      return g.calledAway.map(l=>`
-        <tr>
-          <td><span class="ticker">${g.ticker}</span></td>
-          <td>${l.shares.toLocaleString()}</td>
-          <td>$${l.strike.toFixed(2)}</td>
-          <td class="ta">$${l.costBasis.toFixed(2)}</td>
-          <td>$${l.callStrike.toFixed(2)}</td>
-          <td class="tg">${fm(l.premiumCall)}</td>
-          <td class="${l.gain>=0?'tg':'tr'}">${fm(l.gain)}</td>
-          <td class="td">${fd(l.callDate)}</td>
-        </tr>`).join('');
-    }).join('');
+    const caRows=calledAway.map(g=>
+      g.calledAway.map(l=>
+        '<tr>'+
+          '<td><span class="ticker">'+g.ticker+'</span></td>'+
+          '<td>'+l.shares.toLocaleString()+'</td>'+
+          '<td>$'+l.strike.toFixed(2)+'</td>'+
+          '<td class="ta">$'+l.costBasis.toFixed(2)+'</td>'+
+          '<td>$'+l.callStrike.toFixed(2)+'</td>'+
+          '<td class="tg">'+fm(l.premiumCall)+'</td>'+
+          '<td class="'+( l.gain>=0?'tg':'tr')+'">'+fm(l.gain)+'</td>'+
+          '<td class="td">'+fd(l.callDate)+'</td>'+
+        '</tr>'
+      ).join('')
+    ).join('');
 
-    html+=`
-      <div class="sec-hdr" style="margin-top:24px;">
-        <span class="sec-title">Called Away</span>
-        <span class="td" style="font-size:11px;">Shares sold via covered call assignment</span>
-      </div>
-      <div class="tbl-wrap">
-        <table>
-          <thead><tr>
-            <th>Ticker</th><th>Shares</th><th>Put Strike</th><th>Cost Basis</th>
-            <th>Call Strike</th><th>Call Premium</th><th>Total Gain</th><th>Called Date</th>
-          </tr></thead>
-          <tbody>${caRows}</tbody>
-        </table>
-      </div>`;
+    html+=
+      '<div class="sec-hdr" style="margin-top:24px;">'+
+        '<span class="sec-title">Called Away</span>'+
+        '<span class="td" style="font-size:11px;">Shares sold via covered call assignment</span>'+
+      '</div>'+
+      '<div class="tbl-wrap"><table>'+
+        '<thead><tr>'+
+          '<th>Ticker</th><th>Shares</th><th>Put Strike</th><th>Cost Basis</th>'+
+          '<th>Call Strike</th><th>Call Premium</th><th>Total Gain</th><th>Called Date</th>'+
+        '</tr></thead>'+
+        '<tbody>'+caRows+'</tbody>'+
+      '</table></div>';
   }
 
   container.innerHTML=html;
