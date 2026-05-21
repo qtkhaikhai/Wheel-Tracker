@@ -2603,9 +2603,7 @@ function renderWheels(){
       <option value="">Choose a ticker…</option>
       ${allTickers.map(t=>`<option value="${t}">${t}</option>`).join('')}
     </select>
-    <select class="wd-set-picker" id="wd-set-select" style="display:none;" onchange="_onWheelSetPick()">
-    </select>
-    <span style="font-size:10px;color:var(--text3);" id="wd-picker-hint">or click any ticker name below</span>
+    <span style="font-size:10px;color:var(--text3);">or click any ticker name below</span>
   </div>`:'';
 
   if(!open.length){
@@ -2998,40 +2996,9 @@ function closeWheelDetails(){
 // ── Wheel picker bar: two-step ticker → set selection ──────────
 function _onWheelTickerPick(sel){
   const ticker=sel.value;
-  const setEl=document.getElementById('wd-set-select');
-  const hint=document.getElementById('wd-picker-hint');
-  if(!ticker){ if(setEl){setEl.style.display='none';} return; }
-
-  // Populate set dropdown
-  const tkTrades=trades.filter(t=>t.ticker===ticker);
-  const sets=[...new Set(tkTrades.map(t=>parseInt(t.set)||1))].sort((a,b)=>a-b);
-
-  if(sets.length>1 && setEl){
-    setEl.innerHTML=`<option value="all">All Sets</option>`
-      +sets.map(s=>{
-        const isOpen=tkTrades.some(t=>(parseInt(t.set)||1)===s&&!cd(t));
-        const pl=tkTrades.filter(t=>(parseInt(t.set)||1)===s&&cd(t)).reduce((sum,t)=>sum+(calcPL(t)||0),0);
-        const plStr=(pl>=0?'+':'')+fm(pl);
-        return `<option value="${s}">${isOpen?'● ':''}Set ${s} (${plStr})</option>`;
-      }).join('');
-    setEl.style.display='';
-    if(hint) hint.textContent='then choose a set';
-  } else {
-    if(setEl) setEl.style.display='none';
-    if(hint) hint.textContent='or click any ticker name below';
-    showWheelDetails(ticker);
-  }
-}
-
-function _onWheelSetPick(){
-  const tickerEl=document.getElementById('wd-ticker-select');
-  const setEl=document.getElementById('wd-set-select');
-  if(!tickerEl||!setEl) return;
-  const ticker=tickerEl.value;
-  const setVal=setEl.value;
   if(!ticker) return;
-  if(setVal==='all'){ showWheelDetails(ticker,false,null); }
-  else { showWheelDetails(ticker,false,parseInt(setVal)); }
+  showWheelDetails(ticker);
+  sel.value='';
 }
 
 function showDayDrilldown(dateStr){
