@@ -4166,8 +4166,8 @@ function runSchwabImport(){
         delete openIndex[k];
         added++; // counts as an update
       } else {
-        // no matching open — create a closed trade
-        const t={id:uid()+ri,ticker,set:1,openDate:tradeDate,expDate,type,contracts:qty,strike,premium:0,openFees:0,closeDate:tradeDate,costToClose:price,closeFees:fees,assigned:'No',notes:'Imported as close-only'};
+        // no matching open — create a closed trade with unknown open date
+        const t={id:uid()+ri,ticker,set:1,openDate:'',expDate,type,contracts:qty,strike,premium:0,openFees:0,closeDate:tradeDate,costToClose:price,closeFees:fees,assigned:'No',notes:'Imported as close-only (no matching open)'};
         trades.push(t);
         warnings.push(`${ticker} ${type} $${strike}: no matching open found, imported as closed trade`);
         added++;
@@ -4188,8 +4188,8 @@ function runSchwabImport(){
         t.costToClose=0;
         delete openIndex[k];
       } else {
-        // create assigned trade with no open data
-        const t={id:uid()+ri,ticker,set:1,openDate:assignDate,expDate,type,contracts:qty,strike,premium:0,openFees:0,closeDate:assignDate,costToClose:0,closeFees:0,assigned:'Yes',notes:'Assignment — no matching open found'};
+        // create assigned trade with no open data — open date unknown
+        const t={id:uid()+ri,ticker,set:1,openDate:'',expDate,type,contracts:qty,strike,premium:0,openFees:0,closeDate:assignDate,costToClose:0,closeFees:0,assigned:'Yes',notes:'Assignment — no matching open found'};
         trades.push(t);
         warnings.push(`${ticker} ${type} $${strike}: assignment with no matching open — created placeholder`);
       }
