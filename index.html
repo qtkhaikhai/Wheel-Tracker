@@ -2780,7 +2780,7 @@ function showWheelDetails(ticker, isUpdate, filterSet){
   ts.filter(t=>t.type==='P'&&t.assigned==='Yes').forEach(t=>{
     const shares=(parseInt(t.contracts)||1)*100;
     const strike=parseFloat(t.strike)||0;
-    lots.push({shares, strike, set:t.set, date:cd(t)||t.expDate||''});
+    lots.push({shares, strike, set:t.set, date:cd(t)||t.expDate||'', lotType:'wheel'});
   });
   lots.sort((a,b)=>new Date(a.date||0)-new Date(b.date||0));
   ts.filter(t=>t.type==='C'&&t.assigned==='Yes').forEach(t=>{
@@ -2791,6 +2791,11 @@ function showWheelDetails(ticker, isUpdate, filterSet){
       else { lot.shares-=toRemove; toRemove=0; }
     }
     lots=lots.filter(l=>l.shares>0);
+  });
+
+  // Merge long positions for this ticker (scoped to set filter if active)
+  longs.filter(l=>l.ticker===ticker&&l.shares&&l.price&&(activeSetFilter===null||(parseInt(l.set)||1)===activeSetFilter)).forEach(l=>{
+    lots.push({shares:parseFloat(l.shares)||0, strike:parseFloat(l.price)||0, set:parseInt(l.set)||1, date:l.date||'', lotType:'long', notes:l.notes||''});
   });
 
   const sharesOwned=lots.reduce((s,l)=>s+l.shares,0);
@@ -2847,8 +2852,8 @@ function showWheelDetails(ticker, isUpdate, filterSet){
 
     <div class="wd-sec-title">Shares</div>
     <div class="wd-grid three">
-      <div class="wd-cell"><div class="wd-label">Shares I Own</div><div class="wd-val">${sharesOwned.toLocaleString()}</div><div class="wd-sub">${lots.length} lot${lots.length!==1?'s':''}</div></div>
-      <div class="wd-cell"><div class="wd-label">Dollar Amount Invested</div><div class="wd-val r">${fm(dollarInvested)}</div><div class="wd-sub">strike x shares</div></div>
+      <div class="wd-cell"><div class="wd-label">Shares I Own</div><div class="wd-val">${sharesOwned.toLocaleString()}</div><div class="wd-sub">${lots.filter(l=>l.lotType==='wheel').length} wheel lot${lots.filter(l=>l.lotType==='wheel').length!==1?'s':''}${lots.some(l=>l.lotType==='long')?' + '+lots.filter(l=>l.lotType==='long').length+' long':''}</div></div>
+      <div class="wd-cell"><div class="wd-label">Dollar Amount Invested</div><div class="wd-val r">${fm(dollarInvested)}</div><div class="wd-sub">cost basis × shares</div></div>
       <div class="wd-cell"><div class="wd-label">Share Cost Basis</div><div class="wd-val">${sharesOwned>0?'$'+costBasis.toFixed(2):'—'}</div><div class="wd-sub">avg per share</div></div>
       <div class="wd-cell"><div class="wd-label">Break-Even Price</div><div class="wd-val ${breakEven!=null&&currentPrice!=null?(currentPrice>=breakEven?'tg':'tr'):''}">${breakEven!=null?'$'+breakEven.toFixed(2):'—'}</div><div class="wd-sub">cost basis - premium/share</div></div>
       <div class="wd-cell"><div class="wd-label">Unassigned Shares</div><div class="wd-val">${unassignedShares.toLocaleString()}</div><div class="wd-sub">not under covered call</div></div>
