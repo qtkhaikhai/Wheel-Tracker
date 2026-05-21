@@ -456,6 +456,21 @@ tbody td{padding:10px 13px;white-space:nowrap;}
 @media (max-width:1100px){.sum-kpi-grid{grid-template-columns:repeat(3,1fr);}.sum-two-col{grid-template-columns:1fr;}}
 @media (max-width:640px){.sum-kpi-grid{grid-template-columns:repeat(2,1fr);}.sum-hero-stats{gap:18px;}.sum-hero-stat-val{font-size:20px;}}
 
+/* SET TABS (inside Wheel Details modal) */
+.wd-set-tabs{display:flex;gap:3px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:3px;margin-bottom:16px;flex-wrap:wrap;}
+.wd-set-tab{background:none;border:none;color:var(--text3);font-family:var(--mono);font-size:10px;padding:6px 12px;border-radius:5px;cursor:pointer;letter-spacing:.06em;text-transform:uppercase;transition:all .15s;display:flex;align-items:center;gap:5px;}
+.wd-set-tab:hover{color:var(--text2);background:rgba(255,255,255,0.04);}
+.wd-set-tab.active{color:var(--green);background:var(--green-dim);}
+.wd-set-tab .set-pl{font-size:9px;opacity:.8;}
+/* Set chip on position cards */
+.set-chips{display:flex;gap:4px;flex-wrap:wrap;margin-top:5px;}
+.set-chip{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:4px;font-size:9px;letter-spacing:.07em;border:1px solid var(--border2);color:var(--text3);background:var(--surface2);font-family:var(--mono);}
+.set-chip.active-set{border-color:var(--green-border);color:var(--green);background:var(--green-dim);}
+.set-chip .set-chip-dot{width:4px;height:4px;border-radius:50%;background:currentColor;}
+/* Set selector second dropdown in picker bar */
+.wd-set-picker{background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:12px;padding:7px 10px;border-radius:7px;outline:none;cursor:pointer;transition:border-color .15s;}
+.wd-set-picker:focus{border-color:var(--green);}
+
 /* PROFILE SELECTOR */
 .profile-overlay{position:fixed;inset:0;background:var(--bg);z-index:2000;display:flex;align-items:center;justify-content:center;}
 .profile-box{background:var(--surface);border:1px solid var(--border2);border-radius:16px;padding:40px 48px;text-align:center;min-width:340px;}
@@ -2584,11 +2599,13 @@ function renderWheels(){
   const allTickers=[...new Set(trades.filter(t=>t.ticker).map(t=>t.ticker))].sort();
   const pickerHtml=allTickers.length?`<div class="wd-picker-bar">
     <span class="wd-picker-label">View Wheel Details</span>
-    <select class="wd-ticker-picker" onchange="if(this.value){showWheelDetails(this.value);this.value='';}">
+    <select class="wd-ticker-picker" id="wd-ticker-select" onchange="_onWheelTickerPick(this)">
       <option value="">Choose a ticker…</option>
       ${allTickers.map(t=>`<option value="${t}">${t}</option>`).join('')}
     </select>
-    <span style="font-size:10px;color:var(--text3);">or click any ticker name below</span>
+    <select class="wd-set-picker" id="wd-set-select" style="display:none;" onchange="_onWheelSetPick()">
+    </select>
+    <span style="font-size:10px;color:var(--text3);" id="wd-picker-hint">or click any ticker name below</span>
   </div>`:'';
 
   if(!open.length){
@@ -2674,11 +2691,22 @@ function renderWheels(){
       </div>`;
     }).join('');
 
+    // Build set chips for this ticker
+    const tkAllTrades=trades.filter(t=>t.ticker===g.ticker);
+    const tkSets=[...new Set(tkAllTrades.map(t=>parseInt(t.set)||1))].sort((a,b)=>a-b);
+    const activeSet=Math.max(...legs.map(t=>parseInt(t.set)||1));
+    const _chips=tkSets.map(s=>{
+      const cls='set-chip'+(s===activeSet?' active-set':'');
+      return '<span class="'+cls+'" onclick="event.stopPropagation();showWheelDetails(\''+g.ticker+'\',false,'+s+')" title="View Set '+s+'"><span class="set-chip-dot"></span>S'+s+'</span>';
+    }).join('');
+    const setChipsHtml=tkSets.length>1?'<div class="set-chips">'+_chips+'</div>':'';
+
     return `<div class="pos-card2">
       <div class="pos-card2-hdr">
         <div>
           <div class="pos-card2-ticker wd-ticker-link" style="color:${color}" onclick="showWheelDetails('${g.ticker}')" title="View wheel details">${g.ticker}</div>
           <div style="color:var(--text3);font-size:10px;margin-top:2px;">${legs.length} leg${legs.length!==1?'s':''}</div>
+          ${setChipsHtml}
         </div>
         <div style="text-align:right;">
           <div style="font-family:var(--sans);font-size:16px;font-weight:700;" class="tg">${fm(totalPrem)}</div>
@@ -2706,10 +2734,40 @@ function renderWheels(){
 // =====================================
 //  WHEEL DETAILS MODAL
 // =====================================
-function showWheelDetails(ticker, isUpdate){
+function showWheelDetails(ticker, isUpdate, filterSet){
   if(!ticker){ closeWheelDetails(); return; }
-  const ts=trades.filter(t=>t.ticker===ticker);
+  const allTs=trades.filter(t=>t.ticker===ticker);
+  if(!allTs.length){ closeWheelDetails(); return; }
+
+  // Determine available sets for this ticker
+  const availSets=[...new Set(allTs.map(t=>parseInt(t.set)||1))].sort((a,b)=>a-b);
+  const hasMultipleSets=availSets.length>1;
+  const activeSetFilter=(filterSet!=null)?parseInt(filterSet):null;
+
+  // Filter trades for the chosen set (or all)
+  const ts=activeSetFilter!=null?allTs.filter(t=>(parseInt(t.set)||1)===activeSetFilter):allTs;
   if(!ts.length){ closeWheelDetails(); return; }
+
+  // Build set tab bar
+  const _setTabButtons=(function(){
+    var out=[];
+    for(var _i=0;_i<availSets.length;_i++){
+      var s=availSets[_i];
+      var setTrades=allTs.filter(function(t){return (parseInt(t.set)||1)===s;});
+      var setClosedPL=setTrades.filter(function(t){return cd(t);}).reduce(function(sum,t){return sum+(calcPL(t)||0);},0);
+      var isOpen=setTrades.some(function(t){return !cd(t);});
+      var plLabel=(setClosedPL>=0?'+':'')+fm(setClosedPL);
+      var openDot=isOpen?'&#9679; ':'';
+      var activeCls=activeSetFilter===s?' active':'';
+      var plCls=setClosedPL>=0?'tg':'tr';
+      out.push('<button class="wd-set-tab'+activeCls+'" onclick="showWheelDetails(\''+ticker+'\',true,'+s+')">'+openDot+'Set '+s+' <span class="set-pl '+plCls+'">'+plLabel+'</span></button>');
+    }
+    return out.join('');
+  })();
+  var _allActiveCls=activeSetFilter===null?' active':'';
+  var setTabHtml=hasMultipleSets
+    ? '<div class="wd-set-tabs"><button class="wd-set-tab'+_allActiveCls+'" onclick="showWheelDetails(\''+ticker+'\',true,null)">All Sets</button>'+_setTabButtons+'</div>'
+    : '';
 
   const realizedPutP=ts.filter(t=>t.type==='P'&&cd(t)).reduce((s,t)=>s+(calcPL(t)||0),0);
   const realizedCallP=ts.filter(t=>t.type==='C'&&cd(t)).reduce((s,t)=>s+(calcPL(t)||0),0);
@@ -2754,7 +2812,8 @@ function showWheelDetails(ticker, isUpdate){
     totalPL=mtmShares+totalPremium;
   }
 
-  document.getElementById('wheel-details-title').innerHTML=`${ticker} <span style="color:var(--text3);font-size:13px;font-weight:400;margin-left:8px;">Wheel Details</span>`;
+  const setLabel=activeSetFilter!=null?` — Set ${activeSetFilter}`:'';
+  document.getElementById('wheel-details-title').innerHTML=`${ticker}<span style="color:var(--text3);font-size:13px;font-weight:400;margin-left:8px;">Wheel Details${setLabel}</span>`;
 
   const mtmBlock=currentPrice!=null&&sharesOwned>0?`
     <div style="text-align:right;">
@@ -2928,12 +2987,51 @@ function showWheelDetails(ticker, isUpdate){
       </div>
     </div>`;
 
-  document.getElementById('wheel-details-content').innerHTML=html+waterfallSection+histTable;
+  document.getElementById('wheel-details-content').innerHTML=setTabHtml+html+waterfallSection+histTable;
   if(!isUpdate) document.getElementById('modal-wheel-details').classList.add('open');
 }
 
 function closeWheelDetails(){
   document.getElementById('modal-wheel-details').classList.remove('open');
+}
+
+// ── Wheel picker bar: two-step ticker → set selection ──────────
+function _onWheelTickerPick(sel){
+  const ticker=sel.value;
+  const setEl=document.getElementById('wd-set-select');
+  const hint=document.getElementById('wd-picker-hint');
+  if(!ticker){ if(setEl){setEl.style.display='none';} return; }
+
+  // Populate set dropdown
+  const tkTrades=trades.filter(t=>t.ticker===ticker);
+  const sets=[...new Set(tkTrades.map(t=>parseInt(t.set)||1))].sort((a,b)=>a-b);
+
+  if(sets.length>1 && setEl){
+    setEl.innerHTML=`<option value="all">All Sets</option>`
+      +sets.map(s=>{
+        const isOpen=tkTrades.some(t=>(parseInt(t.set)||1)===s&&!cd(t));
+        const pl=tkTrades.filter(t=>(parseInt(t.set)||1)===s&&cd(t)).reduce((sum,t)=>sum+(calcPL(t)||0),0);
+        const plStr=(pl>=0?'+':'')+fm(pl);
+        return `<option value="${s}">${isOpen?'● ':''}Set ${s} (${plStr})</option>`;
+      }).join('');
+    setEl.style.display='';
+    if(hint) hint.textContent='then choose a set';
+  } else {
+    if(setEl) setEl.style.display='none';
+    if(hint) hint.textContent='or click any ticker name below';
+    showWheelDetails(ticker);
+  }
+}
+
+function _onWheelSetPick(){
+  const tickerEl=document.getElementById('wd-ticker-select');
+  const setEl=document.getElementById('wd-set-select');
+  if(!tickerEl||!setEl) return;
+  const ticker=tickerEl.value;
+  const setVal=setEl.value;
+  if(!ticker) return;
+  if(setVal==='all'){ showWheelDetails(ticker,false,null); }
+  else { showWheelDetails(ticker,false,parseInt(setVal)); }
 }
 
 function showDayDrilldown(dateStr){
