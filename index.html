@@ -415,7 +415,7 @@ tbody td{padding:10px 13px;white-space:nowrap;}
 .sum-exp-dte{font-size:11px;font-weight:500;min-width:42px;text-align:right;}
 .sum-cal{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;padding:12px 16px 16px;}
 .sum-cal-hdr{font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3);text-align:center;padding:6px 0;}
-.sum-cal-day{aspect-ratio:1;min-height:46px;background:var(--surface2);border-radius:4px;padding:4px 5px;display:flex;flex-direction:column;justify-content:space-between;font-size:9px;position:relative;}
+.sum-cal-day{aspect-ratio:1;min-height:46px;background:var(--surface2);border-radius:4px;padding:4px 5px;display:flex;flex-direction:column;justify-content:space-between;font-size:9px;position:relative;overflow:hidden;}
 .sum-cal-day.empty{background:transparent;}
 .sum-cal-day.has-event{background:var(--green-dim);border:1px solid var(--green-border);transition:transform .12s, box-shadow .12s;}
 .sum-cal-day.has-event:hover{transform:translateY(-1px);box-shadow:0 0 0 1px var(--green);}
@@ -462,10 +462,10 @@ tbody td{padding:10px 13px;white-space:nowrap;}
 .profile-title{font-family:var(--sans);font-size:22px;font-weight:800;letter-spacing:-.5px;margin-bottom:6px;}
 .profile-sub{font-size:12px;color:var(--text3);margin-bottom:32px;}
 .profile-cards{display:flex;gap:14px;justify-content:center;margin-bottom:24px;}
-.profile-card{background:var(--surface2);border:2px solid var(--border);border-radius:12px;padding:20px 24px;cursor:pointer;transition:all .15s;min-width:120px;text-align:center;}
+.profile-card{background:var(--surface2);border:2px solid var(--border);border-radius:12px;padding:20px 24px 22px;cursor:pointer;transition:all .15s;min-width:130px;text-align:center;}
 .profile-card:hover{border-color:var(--green);background:var(--green-dim);}
 .profile-card-avatar{width:48px;height:48px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:var(--sans);font-size:20px;font-weight:800;margin:0 auto 10px;}
-.profile-card-name{font-family:var(--sans);font-size:13px;font-weight:600;}
+.profile-card-name{font-family:var(--sans);font-size:13px;font-weight:600;line-height:1.5;padding-bottom:2px;}
 .profile-add{background:none;border:2px dashed var(--border2);color:var(--text3);font-family:var(--mono);font-size:11px;padding:8px 16px;border-radius:7px;cursor:pointer;transition:all .15s;}
 .profile-add:hover{border-color:var(--green);color:var(--green);}
 .profile-edit-row{display:flex;gap:8px;align-items:center;margin-bottom:8px;}
@@ -665,7 +665,20 @@ tbody td{padding:10px 13px;white-space:nowrap;}
         </div>
       </div>
 
-      <div class="settings-section" style="border-color:rgba(255,77,109,0.3);">
+      <div class="settings-section">
+        <div class="settings-section-title">Data Migration</div>
+        <div class="settings-row">
+          <div class="settings-label">
+            <div class="settings-label-title">Set Number Migration</div>
+            <div class="settings-label-sub">One-time tool to assign correct set numbers to your existing trades based on wheel cycle boundaries (put assignment → call away = one set). A backup is downloaded automatically before any changes are made.</div>
+          </div>
+          <div class="settings-control">
+            <button class="settings-btn" onclick="openSetMigration()">⚙ Run Migration</button>
+          </div>
+        </div>
+      </div>
+
+            <div class="settings-section" style="border-color:rgba(255,77,109,0.3);">
         <div class="settings-section-title" style="color:var(--red);border-color:rgba(255,77,109,0.3);">Danger Zone</div>
         <div class="settings-row">
           <div class="settings-label">
@@ -706,6 +719,13 @@ tbody td{padding:10px 13px;white-space:nowrap;}
     <button class="btn-refresh-prices" id="btn-refresh-prices" onclick="refreshYahooPrices()" title="Fetch latest prices from Yahoo Finance">⟳ Refresh Prices</button>
     <span id="price-refresh-status" style="font-size:10px;color:var(--text3);"></span>
     <span style="font-size:10px;color:var(--text3);">Click ✎ Edit on any row to make changes</span>
+  </div>
+</div>
+
+<!-- SET MIGRATION MODAL -->
+<div class="overlay" id="modal-set-migration" style="display:none;align-items:flex-start;padding:24px;overflow-y:auto;">
+  <div class="modal" style="max-width:720px;width:100%;margin:auto;padding:0;overflow:hidden;border-radius:14px;">
+    <div id="smig-content"></div>
   </div>
 </div>
 
@@ -1700,7 +1720,7 @@ function _renderSummaryInner(container){
     // if Saturday, replace with week total cell
     if(dow===6){
       const wt=weeklyTotals[weekIdx];
-      dayCells.push(`<div class="sum-cal-day" style="background:var(--surface2);border:1px solid var(--border2);display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px;">
+      dayCells.push(`<div class="sum-cal-day" style="background:var(--surface2);border:1px solid var(--border2);display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px;aspect-ratio:unset;min-height:52px;overflow:visible;">
         <span style="font-size:8px;letter-spacing:.06em;text-transform:uppercase;color:var(--text3);font-family:var(--sans);">Wk Total</span>
         <span style="font-family:var(--sans);font-weight:700;font-size:11px;" class="${wt&&wt.hasPl?(wt.pl>=0?'tg':'tr'):'td'}">${wt&&wt.hasPl?fm(wt.pl):'—'}</span>
       </div>`);
@@ -1717,7 +1737,7 @@ function _renderSummaryInner(container){
     const wt=weeklyTotals[lastWeekIdx];
     const emptiesNeeded=6-remainder; // days between last day and Saturday
     for(let i=0;i<emptiesNeeded;i++) dayCells.push('<div class="sum-cal-day empty"></div>');
-    dayCells.push(`<div class="sum-cal-day" style="background:var(--surface2);border:1px solid var(--border2);display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px;">
+    dayCells.push(`<div class="sum-cal-day" style="background:var(--surface2);border:1px solid var(--border2);display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px;aspect-ratio:unset;min-height:52px;overflow:visible;">
       <span style="font-size:8px;letter-spacing:.06em;text-transform:uppercase;color:var(--text3);font-family:var(--sans);">Wk Total</span>
       <span style="font-family:var(--sans);font-weight:700;font-size:11px;" class="${wt&&wt.hasPl?(wt.pl>=0?'tg':'tr'):'td'}">${wt&&wt.hasPl?fm(wt.pl):'—'}</span>
     </div>`);
@@ -4209,6 +4229,433 @@ const _gsiInterval=setInterval(()=>{
   }
   if(_gsiCheckCount>30) clearInterval(_gsiInterval);
 },500);
+
+
+// ═══════════════════════════════════════════════════════════════
+//  SET NUMBER MIGRATION TOOL
+// ═══════════════════════════════════════════════════════════════
+
+let _smig = null; // migration state
+
+function openSetMigration(){
+  _smig = _smigBuildState();
+  document.getElementById('modal-set-migration').style.display='flex';
+  _smigRenderLanding();
+}
+
+function closeSetMigration(){
+  document.getElementById('modal-set-migration').style.display='none';
+  _smig = null;
+}
+
+// ── Build full state: detect sets per ticker ──────────────────
+function _smigBuildState(){
+  // Group trades by ticker, sort by openDate
+  const byTicker = {};
+  trades.forEach(t => {
+    if(!t.ticker) return;
+    if(!byTicker[t.ticker]) byTicker[t.ticker] = [];
+    byTicker[t.ticker].push(t);
+  });
+
+  const tickers = Object.keys(byTicker).sort();
+  const tickerStates = {};
+
+  tickers.forEach(ticker => {
+    const ts = byTicker[ticker].slice().sort((a,b)=>{
+      return new Date(a.openDate||'1970-01-01') - new Date(b.openDate||'1970-01-01');
+    });
+
+    // Auto-detect set boundaries
+    // A boundary is placed AFTER a call that was assigned (called away)
+    const boundaries = new Set(); // indices AFTER which a new set starts
+    let sawAssignedPut = false;
+
+    ts.forEach((t, i) => {
+      if(t.type==='P' && t.assigned==='Yes') sawAssignedPut = true;
+      if(t.type==='C' && t.assigned==='Yes' && i < ts.length-1){
+        boundaries.add(i); // new set starts after index i
+      }
+    });
+
+    // Assign set numbers from boundaries
+    const setNums = [];
+    let setNum = 1;
+    ts.forEach((t, i) => {
+      setNums.push(setNum);
+      if(boundaries.has(i)) setNum++;
+    });
+
+    // Detect uncertainty flags per trade gap
+    const flags = ts.map((t, i) => {
+      if(i === 0) return null;
+      const prev = ts[i-1];
+      // Big gap: >30 days between consecutive trades
+      const gap = prev.openDate && t.openDate
+        ? Math.round((new Date(t.openDate) - new Date(prev.openDate)) / 86400e3)
+        : 0;
+      // CC before any assigned put in same tentative set
+      const mySet = setNums[i];
+      const setTrades = ts.filter((_,j) => setNums[j] === mySet);
+      const hasAssignedPutInSet = setTrades.some(x => x.type==='P' && x.assigned==='Yes');
+      const isOrphanCall = t.type==='C' && !hasAssignedPutInSet;
+      if(gap > 30) return 'gap';
+      if(isOrphanCall) return 'orphan';
+      return null;
+    });
+
+    const hasUncertainty = flags.some(f => f !== null);
+    const needsReview = boundaries.size > 0 || hasUncertainty;
+
+    tickerStates[ticker] = {
+      ticker,
+      trades: ts,           // sorted trades
+      setNums: setNums.slice(), // auto-detected set numbers (mutable)
+      boundaries: new Set(boundaries), // mutable boundary set
+      flags,
+      hasUncertainty,
+      needsReview,
+      confirmed: !needsReview, // auto-confirm simple single-set tickers
+      skipped: false,
+    };
+  });
+
+  const reviewQueue = tickers.filter(tk => tickerStates[tk].needsReview);
+  const autoConfirmed = tickers.filter(tk => !tickerStates[tk].needsReview);
+
+  return { tickers, tickerStates, reviewQueue, autoConfirmed, currentIdx: 0 };
+}
+
+// ── Recalculate setNums from boundaries ───────────────────────
+function _smigRecalcSets(ts_state){
+  let setNum = 1;
+  ts_state.setNums = ts_state.trades.map((t, i) => {
+    const s = setNum;
+    if(ts_state.boundaries.has(i)) setNum++;
+    return s;
+  });
+}
+
+// ── SCREEN: Landing ───────────────────────────────────────────
+function _smigRenderLanding(){
+  const { reviewQueue, autoConfirmed, tickerStates } = _smig;
+  const uncertain = reviewQueue.filter(tk => tickerStates[tk].hasUncertainty);
+  const el = document.getElementById('smig-content');
+  el.innerHTML = `
+    <div style="padding:32px 36px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;">
+        <span style="font-family:var(--sans);font-size:18px;font-weight:800;letter-spacing:-.5px;">Set Number Migration</span>
+        <button onclick="closeSetMigration()" style="background:none;border:none;color:var(--text3);font-size:18px;cursor:pointer;padding:4px 8px;">✕</button>
+      </div>
+
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:20px 24px;margin-bottom:20px;line-height:1.8;">
+        <div style="font-family:var(--sans);font-size:13px;font-weight:600;margin-bottom:10px;color:var(--text2);">How it works</div>
+        <div style="font-size:12px;color:var(--text2);">A new set starts when a <span style="color:var(--green);">call is assigned (called away)</span>. All CSP attempts before assignment, and all CCs before call-away, share the same set number.</div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:24px;">
+        <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:16px;text-align:center;">
+          <div style="font-family:var(--sans);font-size:24px;font-weight:800;color:var(--text);">${_smig.tickers.length}</div>
+          <div style="font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--text3);margin-top:4px;">Total Tickers</div>
+        </div>
+        <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:16px;text-align:center;">
+          <div style="font-family:var(--sans);font-size:24px;font-weight:800;color:var(--green);">${autoConfirmed.length}</div>
+          <div style="font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--text3);margin-top:4px;">Auto-Confirmed</div>
+        </div>
+        <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:16px;text-align:center;">
+          <div style="font-family:var(--sans);font-size:24px;font-weight:800;color:var(--amber);">${reviewQueue.length}</div>
+          <div style="font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--text3);margin-top:4px;">Need Review</div>
+        </div>
+      </div>
+
+      ${uncertain.length ? `<div style="background:var(--amber-dim);border:1px solid rgba(255,184,48,.3);border-radius:8px;padding:14px 18px;margin-bottom:20px;font-size:12px;color:var(--amber);">
+        ⚠ ${uncertain.length} ticker${uncertain.length!==1?'s':''} flagged for manual review: <b>${uncertain.join(', ')}</b>
+      </div>` : ''}
+
+      <div style="background:var(--blue-dim);border:1px solid rgba(91,141,238,.3);border-radius:8px;padding:14px 18px;margin-bottom:28px;font-size:12px;color:var(--blue);">
+        💾 A full JSON backup will be downloaded automatically when you click Begin Review.
+      </div>
+
+      ${reviewQueue.length === 0 ? `
+        <div style="text-align:center;color:var(--text3);font-size:12px;padding:12px 0 24px;">
+          All tickers have a single detected set — nothing to review. You can still apply to confirm set numbers.
+        </div>` : ''}
+
+      <div style="display:flex;gap:10px;justify-content:flex-end;">
+        <button onclick="closeSetMigration()" style="background:none;border:1px solid var(--border2);color:var(--text2);font-family:var(--mono);font-size:11px;padding:9px 20px;border-radius:7px;cursor:pointer;">Cancel</button>
+        <button onclick="_smigBeginReview()" style="background:var(--green);color:#000;border:none;font-family:var(--mono);font-size:11px;font-weight:500;padding:9px 24px;border-radius:7px;cursor:pointer;">Begin Review →</button>
+      </div>
+    </div>`;
+}
+
+function _smigBeginReview(){
+  // Auto-download backup first
+  exportBackup();
+  const { reviewQueue } = _smig;
+  if(reviewQueue.length === 0){
+    _smigRenderSummary();
+  } else {
+    _smig.currentIdx = 0;
+    _smigRenderTicker();
+  }
+}
+
+// ── SCREEN: Ticker Review ─────────────────────────────────────
+function _smigRenderTicker(){
+  const { reviewQueue, tickerStates, currentIdx } = _smig;
+  const ticker = reviewQueue[currentIdx];
+  const ts = tickerStates[ticker];
+  const el = document.getElementById('smig-content');
+
+  const totalSets = Math.max(...ts.setNums);
+  const progress = `${currentIdx+1} of ${reviewQueue.length}`;
+
+  // Build trade rows grouped by set
+  let rowsHtml = '';
+  let lastSet = null;
+
+  ts.trades.forEach((t, i) => {
+    const sn = ts.setNums[i];
+    const flag = ts.flags[i];
+
+    if(sn !== lastSet){
+      if(lastSet !== null) rowsHtml += `</div></div>`; // close prev set
+      const isUncertain = ts.trades.some((_, j) => ts.setNums[j]===sn && ts.flags[j]);
+      const setLabel = isUncertain
+        ? `<span style="color:var(--amber);">SET ${sn}  ⚠ uncertain</span>`
+        : `<span style="color:var(--green);">SET ${sn}</span>`;
+
+      // Merge button: only if there's a previous set
+      const mergeBtn = sn > 1
+        ? `<button onclick="_smigMerge('${ticker}',${sn})" style="background:none;border:1px solid var(--border2);color:var(--text3);font-family:var(--mono);font-size:10px;padding:3px 10px;border-radius:5px;cursor:pointer;" title="Merge with set above">Merge ↑</button>`
+        : '';
+
+      rowsHtml += `
+        <div style="margin-bottom:12px;">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+            <span style="font-family:var(--sans);font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;">${setLabel}</span>
+            ${mergeBtn}
+          </div>
+          <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;overflow:hidden;">`;
+      lastSet = sn;
+    }
+
+    const typeLabel = t.type==='P' ? 'PUT' : 'CALL';
+    const typeColor = t.type==='P' ? 'var(--blue)' : 'var(--amber)';
+    const statusLabel = !cd(t) ? 'open' : t.assigned==='Yes' ? (t.type==='P'?'ASSIGNED':'CALLED AWAY') : 'closed';
+    const statusColor = t.assigned==='Yes' ? 'var(--green)' : cd(t) ? 'var(--text3)' : 'var(--amber)';
+    const isBoundary = ts.boundaries.has(i);
+    const flagHtml = flag === 'gap'
+      ? `<span style="font-size:9px;background:var(--amber-dim);color:var(--amber);padding:1px 6px;border-radius:3px;margin-left:6px;">⚠ gap</span>`
+      : flag === 'orphan'
+      ? `<span style="font-size:9px;background:var(--amber-dim);color:var(--amber);padding:1px 6px;border-radius:3px;margin-left:6px;">⚠ orphan CC</span>`
+      : '';
+
+    // Split button between trades (insert boundary before this trade)
+    const splitBtn = i > 0
+      ? `<div style="display:flex;align-items:center;gap:6px;padding:0 14px;">
+          <div style="flex:1;height:1px;background:var(--border);"></div>
+          ${ts.boundaries.has(i-1)
+            ? `<button onclick="_smigRemoveBoundary('${ticker}',${i-1})" style="background:none;border:1px solid var(--border2);color:var(--text3);font-family:var(--mono);font-size:9px;padding:2px 8px;border-radius:4px;cursor:pointer;">✕ remove split</button>`
+            : `<button onclick="_smigAddBoundary('${ticker}',${i-1})" style="background:none;border:1px solid var(--border2);color:var(--text3);font-family:var(--mono);font-size:9px;padding:2px 8px;border-radius:4px;cursor:pointer;">+ split here</button>`
+          }
+          <div style="flex:1;height:1px;background:var(--border);"></div>
+        </div>`
+      : '';
+
+    // Only show split between trades in same set (boundary already shown as set header)
+    if(i > 0 && ts.setNums[i-1] === sn){
+      rowsHtml += splitBtn;
+    }
+
+    rowsHtml += `
+      <div style="display:grid;grid-template-columns:52px 90px 90px 70px 60px 1fr;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid var(--border);font-size:11px;" class="smig-row">
+        <span style="font-family:var(--sans);font-weight:700;font-size:10px;color:${typeColor};">${typeLabel}</span>
+        <span style="color:var(--text2);">${t.openDate||'—'}</span>
+        <span style="color:var(--text3);">${t.expDate||'—'}</span>
+        <span style="color:var(--text2);">$${parseFloat(t.strike||0).toFixed(0)}</span>
+        <span style="color:var(--text3);font-size:10px;">${parseInt(t.contracts)||1}K</span>
+        <span style="color:${statusColor};font-family:var(--sans);font-weight:600;font-size:10px;">${statusLabel}${flagHtml}</span>
+      </div>`;
+  });
+
+  if(lastSet !== null) rowsHtml += `</div></div>`;
+
+  el.innerHTML = `
+    <div style="padding:28px 32px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+        <span style="font-family:var(--sans);font-size:18px;font-weight:800;letter-spacing:-.5px;">${ticker}</span>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:11px;color:var(--text3);">${progress}</span>
+          <button onclick="closeSetMigration()" style="background:none;border:none;color:var(--text3);font-size:18px;cursor:pointer;padding:4px 8px;">✕</button>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:20px;">${ts.trades.length} trades · ${totalSets} set${totalSets!==1?'s':''} detected</div>
+
+      <div style="max-height:420px;overflow-y:auto;margin-bottom:20px;padding-right:4px;">
+        <div style="display:grid;grid-template-columns:52px 90px 90px 70px 60px 1fr;gap:8px;padding:6px 14px;margin-bottom:4px;">
+          <span style="font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--text3);">Type</span>
+          <span style="font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--text3);">Open</span>
+          <span style="font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--text3);">Exp</span>
+          <span style="font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--text3);">Strike</span>
+          <span style="font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--text3);">Qty</span>
+          <span style="font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--text3);">Status</span>
+        </div>
+        ${rowsHtml}
+      </div>
+
+      <div style="display:flex;gap:10px;justify-content:space-between;align-items:center;border-top:1px solid var(--border);padding-top:18px;">
+        <button onclick="_smigSkipTicker()" style="background:none;border:1px solid var(--border2);color:var(--text3);font-family:var(--mono);font-size:11px;padding:9px 18px;border-radius:7px;cursor:pointer;">Skip (keep set 1)</button>
+        <div style="display:flex;gap:10px;">
+          ${currentIdx > 0 ? `<button onclick="_smigGoPrev()" style="background:none;border:1px solid var(--border2);color:var(--text2);font-family:var(--mono);font-size:11px;padding:9px 18px;border-radius:7px;cursor:pointer;">← Back</button>` : ''}
+          <button onclick="_smigConfirmTicker()" style="background:var(--green);color:#000;border:none;font-family:var(--mono);font-size:11px;font-weight:500;padding:9px 24px;border-radius:7px;cursor:pointer;">Confirm & Next →</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function _smigAddBoundary(ticker, afterIdx){
+  _smig.tickerStates[ticker].boundaries.add(afterIdx);
+  _smigRecalcSets(_smig.tickerStates[ticker]);
+  _smigRenderTicker();
+}
+
+function _smigRemoveBoundary(ticker, afterIdx){
+  _smig.tickerStates[ticker].boundaries.delete(afterIdx);
+  _smigRecalcSets(_smig.tickerStates[ticker]);
+  _smigRenderTicker();
+}
+
+function _smigMerge(ticker, setNum){
+  // Remove the boundary that starts setNum (boundary is after the last trade of setNum-1)
+  const ts = _smig.tickerStates[ticker];
+  // Find the last index that has setNum-1
+  let boundaryIdx = -1;
+  ts.setNums.forEach((s, i) => { if(s === setNum-1) boundaryIdx = i; });
+  if(boundaryIdx >= 0){
+    ts.boundaries.delete(boundaryIdx);
+    _smigRecalcSets(ts);
+    _smigRenderTicker();
+  }
+}
+
+function _smigConfirmTicker(){
+  const { reviewQueue, tickerStates, currentIdx } = _smig;
+  tickerStates[reviewQueue[currentIdx]].confirmed = true;
+  _smigAdvance();
+}
+
+function _smigSkipTicker(){
+  const { reviewQueue, tickerStates, currentIdx } = _smig;
+  tickerStates[reviewQueue[currentIdx]].skipped = true;
+  _smigAdvance();
+}
+
+function _smigGoPrev(){
+  _smig.currentIdx = Math.max(0, _smig.currentIdx - 1);
+  _smigRenderTicker();
+}
+
+function _smigAdvance(){
+  _smig.currentIdx++;
+  if(_smig.currentIdx >= _smig.reviewQueue.length){
+    _smigRenderSummary();
+  } else {
+    _smigRenderTicker();
+  }
+}
+
+// ── SCREEN: Summary ───────────────────────────────────────────
+function _smigRenderSummary(){
+  const { tickers, tickerStates, autoConfirmed, reviewQueue } = _smig;
+  const el = document.getElementById('smig-content');
+
+  let tradesToUpdate = 0;
+  const rows = tickers.map(ticker => {
+    const ts = tickerStates[ticker];
+    const maxSet = Math.max(...ts.setNums);
+    let statusIcon, statusText, statusColor;
+    if(ts.skipped){
+      statusIcon = '—'; statusText = 'skipped · stays set 1'; statusColor = 'var(--text3)';
+    } else if(ts.confirmed){
+      statusIcon = '✓'; statusText = `${maxSet} set${maxSet!==1?'s':''}`;
+      statusColor = ts.hasUncertainty ? 'var(--amber)' : 'var(--green)';
+      tradesToUpdate += ts.trades.length;
+    } else {
+      // auto-confirmed (needsReview=false)
+      statusIcon = '✓'; statusText = `${maxSet} set${maxSet!==1?'s':''} · auto`;
+      statusColor = 'var(--green)';
+      tradesToUpdate += ts.trades.length;
+    }
+    return `<div style="display:grid;grid-template-columns:100px 1fr auto;gap:12px;align-items:center;padding:9px 18px;border-bottom:1px solid var(--border);font-size:12px;">
+      <span style="font-family:var(--sans);font-weight:700;">${ticker}</span>
+      <span style="color:var(--text3);">${statusText}</span>
+      <span style="color:${statusColor};font-weight:600;">${statusIcon}</span>
+    </div>`;
+  }).join('');
+
+  const skippedCount = reviewQueue.filter(tk => tickerStates[tk].skipped).length;
+
+  el.innerHTML = `
+    <div style="padding:28px 32px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+        <span style="font-family:var(--sans);font-size:18px;font-weight:800;letter-spacing:-.5px;">Ready to Apply</span>
+        <button onclick="closeSetMigration()" style="background:none;border:none;color:var(--text3);font-size:18px;cursor:pointer;padding:4px 8px;">✕</button>
+      </div>
+
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;overflow:hidden;max-height:360px;overflow-y:auto;margin-bottom:20px;">
+        <div style="display:grid;grid-template-columns:100px 1fr auto;gap:12px;padding:7px 18px;background:var(--surface2);border-bottom:1px solid var(--border2);">
+          <span style="font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--text3);">Ticker</span>
+          <span style="font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--text3);">Result</span>
+          <span style="font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--text3);">Status</span>
+        </div>
+        ${rows}
+      </div>
+
+      <div style="font-size:12px;color:var(--text2);margin-bottom:6px;">
+        <b>${tradesToUpdate}</b> trades will be updated across <b>${tickers.length - skippedCount}</b> tickers.
+        ${skippedCount ? `<span style="color:var(--text3);"> · ${skippedCount} ticker${skippedCount!==1?'s':''} skipped (stays set 1).</span>` : ''}
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:24px;">Your backup was already downloaded. This action cannot be undone without restoring it.</div>
+
+      <div style="display:flex;gap:10px;justify-content:flex-end;border-top:1px solid var(--border);padding-top:18px;">
+        <button onclick="closeSetMigration()" style="background:none;border:1px solid var(--border2);color:var(--text2);font-family:var(--mono);font-size:11px;padding:9px 18px;border-radius:7px;cursor:pointer;">Cancel</button>
+        <button onclick="_smigApply()" style="background:var(--green);color:#000;border:none;font-family:var(--mono);font-size:11px;font-weight:500;padding:9px 24px;border-radius:7px;cursor:pointer;">Apply Changes</button>
+      </div>
+    </div>`;
+}
+
+// ── Apply: write set numbers back to trades ───────────────────
+function _smigApply(){
+  const { tickers, tickerStates } = _smig;
+
+  // Build a map: tradeId -> newSet
+  const setMap = {};
+  tickers.forEach(ticker => {
+    const ts = tickerStates[ticker];
+    if(ts.skipped) return; // leave as-is
+    ts.trades.forEach((t, i) => {
+      setMap[t.id] = ts.setNums[i];
+    });
+  });
+
+  // Write to global trades array
+  let updated = 0;
+  trades.forEach(t => {
+    if(t.id in setMap){
+      t.set = setMap[t.id];
+      updated++;
+    }
+  });
+
+  save();
+  renderLog();
+  try { renderHistory(); } catch(e){}
+  try { renderDerived(); } catch(e){}
+
+  closeSetMigration();
+  showToast(`Migration complete — ${updated} trades updated`, false);
+}
 
 </script>
 </body>
