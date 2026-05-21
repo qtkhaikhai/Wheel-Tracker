@@ -1110,7 +1110,21 @@ async function loadFromDrive(userTriggered){
 
 function _applyDriveData(d){
   if(!d||typeof d!=='object') return;
-  if(Array.isArray(d.trades)) trades=d.trades;
+  if(Array.isArray(d.trades)){
+    // Preserve any openDates already stored locally (they may have been patched)
+    const pid=_activeProfile?_activeProfile.id:'default';
+    const localTrades=JSON.parse(localStorage.getItem('wt_trades_'+pid)||'[]');
+    const localById={};
+    localTrades.forEach(t=>{ if(t.id) localById[t.id]=t; });
+    trades=d.trades.map(dt=>{
+      const local=localById[dt.id];
+      // If local has a non-empty openDate and Drive has a different one, keep local
+      if(local&&local.openDate&&dt.openDate&&local.openDate!==dt.openDate){
+        return {...dt, openDate:local.openDate};
+      }
+      return dt;
+    });
+  }
   if(Array.isArray(d.longs)) longs=d.longs;
   if(d.sharePrices&&typeof d.sharePrices==='object') sharePrices=d.sharePrices;
   if(d.settings&&typeof d.settings==='object') settings=Object.assign({},settings,d.settings);
@@ -1235,14 +1249,14 @@ const FIELDS=[
 ];
 
 let trades=JSON.parse(localStorage.getItem('wt_trades')||'[]');
-// Normalize fees on load
+// Normalize fees on load (read-only key used only as fallback before profile loads)
 trades.forEach(t=>{
   t.openFees=0.65;
   const ctc=parseFloat(t.costToClose)||0;
   const hasClose=t.closeDate&&t.closeDate!=='0'&&t.closeDate!=='null'&&String(t.closeDate).trim()!=='';
   if(hasClose||ctc>0){ t.closeFees=ctc>=0.05?0.65:0.01; }
 });
-if(trades.length>0) localStorage.setItem('wt_trades',JSON.stringify(trades));
+// NOTE: intentionally NOT writing back to wt_trades here — profile load overwrites trades
 
 let longs=JSON.parse(localStorage.getItem('wt_longs')||'[]');
 function saveLongs(){ localStorage.setItem('wt_longs',JSON.stringify(longs)); _scheduleDriveSave(); }
