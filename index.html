@@ -2596,7 +2596,10 @@ function renderWheels(){
   const container=document.getElementById('pos-content');
   const open=trades.filter(t=>!cd(t)&&t.ticker);
 
-  const allTickers=[...new Set(trades.filter(t=>t.ticker).map(t=>t.ticker))].sort();
+  const allTickers=[...new Set([
+    ...trades.filter(t=>t.ticker).map(t=>t.ticker),
+    ...longs.filter(l=>l.ticker&&l.shares&&l.price).map(l=>l.ticker)
+  ])].sort();
   const pickerHtml=allTickers.length?`<div class="wd-picker-bar">
     <span class="wd-picker-label">View Wheel Details</span>
     <select class="wd-ticker-picker" id="wd-ticker-select" onchange="_onWheelTickerPick(this)">
@@ -2735,16 +2738,21 @@ function renderWheels(){
 function showWheelDetails(ticker, isUpdate, filterSet){
   if(!ticker){ closeWheelDetails(); return; }
   const allTs=trades.filter(t=>t.ticker===ticker);
-  if(!allTs.length){ closeWheelDetails(); return; }
+  const allLongsForTicker=longs.filter(l=>l.ticker===ticker&&l.shares&&l.price);
+  if(!allTs.length&&!allLongsForTicker.length){ closeWheelDetails(); return; }
 
-  // Determine available sets for this ticker
-  const availSets=[...new Set(allTs.map(t=>parseInt(t.set)||1))].sort((a,b)=>a-b);
+  // Determine available sets for this ticker (from trades + longs)
+  const tradeSets=allTs.map(t=>parseInt(t.set)||1);
+  const longSets=allLongsForTicker.map(l=>parseInt(l.set)||1);
+  const availSets=[...new Set([...tradeSets,...longSets])].sort((a,b)=>a-b);
   const hasMultipleSets=availSets.length>1;
   const activeSetFilter=(filterSet!=null)?parseInt(filterSet):null;
 
   // Filter trades for the chosen set (or all)
   const ts=activeSetFilter!=null?allTs.filter(t=>(parseInt(t.set)||1)===activeSetFilter):allTs;
-  if(!ts.length){ closeWheelDetails(); return; }
+  // Don't bail if ts is empty but longs exist for this ticker/set
+  const longsForFilter=allLongsForTicker.filter(l=>activeSetFilter===null||(parseInt(l.set)||1)===activeSetFilter);
+  if(!ts.length&&!longsForFilter.length){ closeWheelDetails(); return; }
 
   // Build set tab bar
   const _setTabButtons=(function(){
