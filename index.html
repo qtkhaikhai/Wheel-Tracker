@@ -406,7 +406,7 @@ tbody td{padding:10px 13px;white-space:nowrap;}
 .sum-chart-toggle button:hover{color:var(--text2);}
 .sum-chart-toggle button.active{color:var(--green);background:var(--green-dim);}
 .sum-chart-svg{width:100%;height:260px;}
-.sum-two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px;align-items:stretch;}.sum-two-col>.sum-panel{height:100%;display:flex;flex-direction:column;}
+.sum-two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px;align-items:stretch;}.sum-two-col>.sum-panel{display:flex;flex-direction:column;}
 .sum-panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;}
 .sum-panel-hdr{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;}
 .sum-panel-title{font-family:var(--sans);font-size:12px;font-weight:600;color:var(--text2);letter-spacing:.06em;text-transform:uppercase;}
@@ -3456,10 +3456,17 @@ function renderLong(){
       <div class="stat-card"><div class="stat-label">Avg Price Paid</div><div class="stat-val">${totalShares?'$'+(totalCost/totalShares).toFixed(2):'—'}</div></div>
     </div>`:'';
 
-  // editable table rows
-  const rows=longs.map((l,i)=>`
+  // editable table rows — sorted by date for display, data-li = original index
+  const sortedLongs=longs
+    .map((l,i)=>({l,i}))
+    .sort((a,b)=>{
+      const da=a.l.date?new Date(a.l.date+'T12:00:00'):new Date(0);
+      const db=b.l.date?new Date(b.l.date+'T12:00:00'):new Date(0);
+      return longSortDir==='desc'?db-da:da-db;
+    });
+  const rows=sortedLongs.map(({l,i},rowNum)=>`
     <tr data-li="${i}">
-      <td class="row-num">${i+1}</td>
+      <td class="row-num">${rowNum+1}</td>
       <td class="ecell narrow" data-li="${i}" data-lkey="date" onclick="activateLongCell(this)"><span class="cv td">${fd(l.date)}</span></td>
       <td class="ecell narrow" data-li="${i}" data-lkey="ticker" onclick="activateLongCell(this)"><span class="cv"><span class="ticker">${l.ticker||''}</span></span></td>
       <td class="ecell xnarrow" data-li="${i}" data-lkey="set" onclick="activateLongCell(this)"><span class="cv td">${l.set||1}</span></td>
@@ -3475,7 +3482,10 @@ function renderLong(){
     ${stats}
     <div class="sec-hdr">
       <span class="sec-title">Long Stock Positions</span>
-      <span class="td" style="font-size:11px;">Click any cell to edit</span>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <span class="td" style="font-size:11px;">Click any cell to edit</span>
+        <button onclick="toggleLongSort()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text2);font-family:var(--mono);font-size:10px;padding:4px 10px;border-radius:5px;cursor:pointer;letter-spacing:.05em;">\${longSortDir==='desc'?'Date ↓':'Date ↑'}</button>
+      </div>
     </div>
     <div class="log-outer">
       <table class="log-table">
@@ -3489,8 +3499,14 @@ function renderLong(){
     </div>`;
 }
 
+function toggleLongSort(){
+  longSortDir = longSortDir==='desc' ? 'asc' : 'desc';
+  renderLong();
+}
+
 // Long cell editing (reuses same pattern as log)
 let activeLongCell=null;
+let longSortDir='desc'; // newest first
 
 function activateLongCell(td){
   if(activeLongCell===td) return;
