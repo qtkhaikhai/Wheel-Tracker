@@ -406,7 +406,7 @@ tbody td{padding:10px 13px;white-space:nowrap;}
 .sum-chart-toggle button:hover{color:var(--text2);}
 .sum-chart-toggle button.active{color:var(--green);background:var(--green-dim);}
 .sum-chart-svg{width:100%;height:260px;}
-.sum-two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px;align-items:stretch;}.sum-two-col>.sum-panel{height:100%;display:flex;flex-direction:column;}
+.sum-two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px;align-items:start;}.sum-two-col>.sum-panel{display:flex;flex-direction:column;}
 .sum-panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;}
 .sum-panel-hdr{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;}
 .sum-panel-title{font-family:var(--sans);font-size:12px;font-weight:600;color:var(--text2);letter-spacing:.06em;text-transform:uppercase;}
@@ -1730,7 +1730,7 @@ function _renderSummaryInner(container){
         ${expWeekBtns}
       </div>
       ${totalsRow}
-      <div class="sum-panel-body">${expRows||`<div style="padding:30px;text-align:center;color:var(--text3);font-size:12px;">${expEmpty}</div>`}</div>
+      <div class="sum-panel-body" style="max-height:320px;">${expRows||`<div style="padding:30px;text-align:center;color:var(--text3);font-size:12px;">${expEmpty}</div>`}</div>
     </div>`;
 
   // ──────── INCOME CALENDAR
