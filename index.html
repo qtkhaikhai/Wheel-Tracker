@@ -1790,6 +1790,14 @@ function _renderSummaryInner(container){
     const _cTk=t.ticker||'?';
     weeklyCollateral[_cWk].byTicker[_cTk]=(weeklyCollateral[_cWk].byTicker[_cTk]||0)+_cAmt;
   });
+  function _buildCollHtml(wc, cid){
+    if(!wc) return '';
+    const brk=Object.entries(wc.byTicker).map(([t,v])=>t+' '+fm(v)).join(' · ');
+    return '<span onclick="toggleCollateral(''+cid+'',event)" style="cursor:pointer;display:flex;align-items:center;justify-content:center;gap:3px;font-size:8px;letter-spacing:.05em;text-transform:uppercase;color:var(--red);font-family:var(--sans);margin-top:4px;">'
+      +'<span id="'+cid+'-arrow" style="font-size:9px;">&#9658;</span>Collateral Risk</span>'
+      +'<span style="font-family:var(--sans);font-weight:700;font-size:11px;color:var(--red);">'+fm(wc.total)+'</span>'
+      +'<div id="'+cid+'" style="display:none;font-size:9px;color:var(--text3);text-align:center;line-height:1.6;padding:2px 4px 0;white-space:normal;">'+brk+'</div>';
+  }
 
   const dayCells=[];
   const dayLabels=['S','M','T','W','T','F','S'];
@@ -1808,11 +1816,12 @@ function _renderSummaryInner(container){
     if(dow===6){
       const wt=weeklyTotals[weekIdx];
       const wc=weeklyCollateral[weekIdx];
-      const _cBrk=wc?Object.entries(wc.byTicker).map(([_t,_v])=>_t+' '+fm(_v)).join(' · '):'';
+      const _cid='cr-'+calY+'-'+calM+'-'+weekIdx;
+      const _collHtml=_buildCollHtml(wc,_cid);
       dayCells.push(`<div class="sum-cal-day" style="background:var(--surface2);border:1px solid var(--border2);display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px;aspect-ratio:unset;min-height:${wc?'90px':'52px'};overflow:visible;">
         <span style="font-size:8px;letter-spacing:.06em;text-transform:uppercase;color:var(--text3);font-family:var(--sans);">Wk Total</span>
         <span style="font-family:var(--sans);font-weight:700;font-size:11px;" class="${wt&&wt.hasPl?(wt.pl>=0?'tg':'tr'):'td'}">${wt&&wt.hasPl?fm(wt.pl):'—'}</span>
-        ${wc?(()=>{ const _id='cr-'+calY+'-'+calM+'-'+weekIdx; return `<span onclick="toggleCollateral('${_id}',event)" style="cursor:pointer;display:flex;align-items:center;gap:3px;font-size:8px;letter-spacing:.05em;text-transform:uppercase;color:var(--red);font-family:var(--sans);margin-top:4px;"><span id="${_id}-arrow">&#9658;</span>Collateral Risk</span><span style="font-family:var(--sans);font-weight:700;font-size:11px;color:var(--red);">${fm(wc.total)}</span><div id="${_id}" style="display:none;font-size:9px;color:var(--text3);text-align:center;line-height:1.6;padding:0 3px;white-space:normal;">${_cBrk}</div>`; })():''}
+        ${_collHtml}
       </div>`);
     } else {
       dayCells.push(`<div class="${cls}"${interactiveAttrs}><span class="sum-cal-num">${d}</span>${ev?`<span class="sum-cal-val ${ev.pl>=0?'tg':'tr'}">${fm(ev.pl)}</span>`:''}</div>`);
@@ -1826,13 +1835,14 @@ function _renderSummaryInner(container){
     const lastWeekIdx=Math.floor((totalCells-1)/7);
     const wt=weeklyTotals[lastWeekIdx];
     const wce=weeklyCollateral[lastWeekIdx];
-    const _cBrkE=wce?Object.entries(wce.byTicker).map(([_t,_v])=>_t+' '+fm(_v)).join(' · '):'';
+    const _cide='cr-'+calY+'-'+calM+'-'+lastWeekIdx;
+    const _collHtmlE=_buildCollHtml(wce,_cide);
     const emptiesNeeded=6-remainder; // days between last day and Saturday
     for(let i=0;i<emptiesNeeded;i++) dayCells.push('<div class="sum-cal-day empty"></div>');
     dayCells.push(`<div class="sum-cal-day" style="background:var(--surface2);border:1px solid var(--border2);display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px;aspect-ratio:unset;min-height:${wce?'90px':'52px'};overflow:visible;">
       <span style="font-size:8px;letter-spacing:.06em;text-transform:uppercase;color:var(--text3);font-family:var(--sans);">Wk Total</span>
       <span style="font-family:var(--sans);font-weight:700;font-size:11px;" class="${wt&&wt.hasPl?(wt.pl>=0?'tg':'tr'):'td'}">${wt&&wt.hasPl?fm(wt.pl):'—'}</span>
-      ${wce?(()=>{ const _ide='cr-'+calY+'-'+calM+'-'+lastWeekIdx; return `<span onclick="toggleCollateral('${_ide}',event)" style="cursor:pointer;display:flex;align-items:center;gap:3px;font-size:8px;letter-spacing:.05em;text-transform:uppercase;color:var(--red);font-family:var(--sans);margin-top:4px;"><span id="${_ide}-arrow">&#9658;</span>Collateral Risk</span><span style="font-family:var(--sans);font-weight:700;font-size:11px;color:var(--red);">${fm(wce.total)}</span><div id="${_ide}" style="display:none;font-size:9px;color:var(--text3);text-align:center;line-height:1.6;padding:0 3px;white-space:normal;">${_cBrkE}</div>`; })():''}
+      ${_collHtmlE}
     </div>`);
   }
   const calMonthLbl=MONTHS[calM]+' '+calY;
@@ -3176,9 +3186,9 @@ function toggleCollateral(id,e){
   const el=document.getElementById(id);
   if(!el) return;
   const arrow=document.getElementById(id+'-arrow');
-  const isHidden=el.style.display==='none'||el.style.display==='';
-  el.style.display=isHidden?'block':'none';
-  if(arrow) arrow.textContent=isHidden?'▾':'▸';
+  const hidden=el.style.display==='none'||!el.style.display;
+  el.style.display=hidden?'block':'none';
+  if(arrow) arrow.innerHTML=hidden?'&#9660;':'&#9658;';
 }
 function showCalTooltip(dateStr, ev){
   const tt=document.getElementById('cal-tooltip'); if(!tt) return;
