@@ -3456,7 +3456,8 @@ function renderLong(){
       <div class="stat-card"><div class="stat-label">Avg Price Paid</div><div class="stat-val">${totalShares?'$'+(totalCost/totalShares).toFixed(2):'—'}</div></div>
     </div>`:'';
 
-  const sortedLongs=longs.map((l,i)=>({l,i})).sort((a,b)=>{const da=a.l.date?new Date(a.l.date+'T12:00:00'):new Date(0);const db=b.l.date?new Date(b.l.date+'T12:00:00'):new Date(0);return longSortDir==='desc'?db-da:da-db;});
+  // editable table rows — auto-sorted newest first
+  const sortedLongs=longs.map((l,i)=>({l,i})).sort((a,b)=>{const da=a.l.date?new Date(a.l.date+'T12:00:00'):new Date(0);const db=b.l.date?new Date(b.l.date+'T12:00:00'):new Date(0);return db-da;});
   const rows=sortedLongs.map(({l,i},rowNum)=>`
     <tr data-li="${i}">
       <td class="row-num">${rowNum+1}</td>
@@ -3475,10 +3476,7 @@ function renderLong(){
     ${stats}
     <div class="sec-hdr">
       <span class="sec-title">Long Stock Positions</span>
-      <div style="display:flex;align-items:center;gap:12px;">
-        <span class="td" style="font-size:11px;">Click any cell to edit</span>
-        <button onclick="toggleLongSort()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text2);font-family:var(--mono);font-size:10px;padding:4px 10px;border-radius:5px;cursor:pointer;letter-spacing:.05em;">\${longSortDir==='desc'?'Date ↓':'Date ↑'}</button>
-      </div>
+      <span class="td" style="font-size:11px;">Sorted by date · Click any cell to edit</span>
     </div>
     <div class="log-outer">
       <table class="log-table">
@@ -3492,14 +3490,8 @@ function renderLong(){
     </div>`;
 }
 
-function toggleLongSort(){
-  longSortDir=longSortDir==='desc'?'asc':'desc';
-  renderLong();
-}
-
 // Long cell editing (reuses same pattern as log)
 let activeLongCell=null;
-let longSortDir='desc';
 
 function activateLongCell(td){
   if(activeLongCell===td) return;
