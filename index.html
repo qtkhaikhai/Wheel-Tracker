@@ -1775,6 +1775,22 @@ function _renderSummaryInner(container){
     }
   }
 
+  // weekly collateral risk: all CSPs expiring this calendar month, grouped by week
+  const weeklyCollateral={};
+  trades.forEach(t=>{
+    if(t.type!=='P'||!t.expDate) return;
+    const _cDate=new Date(t.expDate+'T12:00:00');
+    if(_cDate.getFullYear()!==calY||_cDate.getMonth()!==calM) return;
+    const _cDay=_cDate.getDate();
+    const _cWk=Math.floor((firstDow+_cDay-1)/7);
+    const _cK=parseInt(t.contracts)||1;
+    const _cAmt=(parseFloat(t.strike)||0)*_cK*100;
+    if(!weeklyCollateral[_cWk]) weeklyCollateral[_cWk]={total:0,byTicker:{}};
+    weeklyCollateral[_cWk].total+=_cAmt;
+    const _cTk=t.ticker||'?';
+    weeklyCollateral[_cWk].byTicker[_cTk]=(weeklyCollateral[_cWk].byTicker[_cTk]||0)+_cAmt;
+  });
+
   const dayCells=[];
   const dayLabels=['S','M','T','W','T','F','S'];
   dayLabels.forEach(l=>dayCells.push(`<div class="sum-cal-hdr">${l}</div>`));
@@ -1791,9 +1807,12 @@ function _renderSummaryInner(container){
     // if Saturday, replace with week total cell
     if(dow===6){
       const wt=weeklyTotals[weekIdx];
-      dayCells.push(`<div class="sum-cal-day" style="background:var(--surface2);border:1px solid var(--border2);display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px;aspect-ratio:unset;min-height:52px;overflow:visible;">
+      const wc=weeklyCollateral[weekIdx];
+      const _cBrk=wc?Object.entries(wc.byTicker).map(([_t,_v])=>_t+' '+fm(_v)).join(' · '):'';
+      dayCells.push(`<div class="sum-cal-day" style="background:var(--surface2);border:1px solid var(--border2);display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px;aspect-ratio:unset;min-height:${wc?'90px':'52px'};overflow:visible;">
         <span style="font-size:8px;letter-spacing:.06em;text-transform:uppercase;color:var(--text3);font-family:var(--sans);">Wk Total</span>
         <span style="font-family:var(--sans);font-weight:700;font-size:11px;" class="${wt&&wt.hasPl?(wt.pl>=0?'tg':'tr'):'td'}">${wt&&wt.hasPl?fm(wt.pl):'—'}</span>
+        ${wc?`<span style="font-size:8px;letter-spacing:.05em;text-transform:uppercase;color:var(--red);font-family:var(--sans);margin-top:4px;">Collateral Risk</span><span style="font-family:var(--sans);font-weight:700;font-size:11px;color:var(--red);">${fm(wc.total)}</span><span style="font-size:9px;color:var(--text3);text-align:center;line-height:1.5;padding:0 3px;white-space:normal;">${_cBrk}</span>`:''}
       </div>`);
     } else {
       dayCells.push(`<div class="${cls}"${interactiveAttrs}><span class="sum-cal-num">${d}</span>${ev?`<span class="sum-cal-val ${ev.pl>=0?'tg':'tr'}">${fm(ev.pl)}</span>`:''}</div>`);
@@ -1806,11 +1825,14 @@ function _renderSummaryInner(container){
     // last partial row: pad remaining weekdays with empty, then add week total for that partial week
     const lastWeekIdx=Math.floor((totalCells-1)/7);
     const wt=weeklyTotals[lastWeekIdx];
+    const wce=weeklyCollateral[lastWeekIdx];
+    const _cBrkE=wce?Object.entries(wce.byTicker).map(([_t,_v])=>_t+' '+fm(_v)).join(' · '):'';
     const emptiesNeeded=6-remainder; // days between last day and Saturday
     for(let i=0;i<emptiesNeeded;i++) dayCells.push('<div class="sum-cal-day empty"></div>');
-    dayCells.push(`<div class="sum-cal-day" style="background:var(--surface2);border:1px solid var(--border2);display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px;aspect-ratio:unset;min-height:52px;overflow:visible;">
+    dayCells.push(`<div class="sum-cal-day" style="background:var(--surface2);border:1px solid var(--border2);display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px;aspect-ratio:unset;min-height:${wce?'90px':'52px'};overflow:visible;">
       <span style="font-size:8px;letter-spacing:.06em;text-transform:uppercase;color:var(--text3);font-family:var(--sans);">Wk Total</span>
       <span style="font-family:var(--sans);font-weight:700;font-size:11px;" class="${wt&&wt.hasPl?(wt.pl>=0?'tg':'tr'):'td'}">${wt&&wt.hasPl?fm(wt.pl):'—'}</span>
+      ${wce?`<span style="font-size:8px;letter-spacing:.05em;text-transform:uppercase;color:var(--red);font-family:var(--sans);margin-top:4px;">Collateral Risk</span><span style="font-family:var(--sans);font-weight:700;font-size:11px;color:var(--red);">${fm(wce.total)}</span><span style="font-size:9px;color:var(--text3);text-align:center;line-height:1.5;padding:0 3px;white-space:normal;">${_cBrkE}</span>`:''}
     </div>`);
   }
   const calMonthLbl=MONTHS[calM]+' '+calY;
