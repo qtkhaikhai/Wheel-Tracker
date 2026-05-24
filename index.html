@@ -406,11 +406,11 @@ tbody td{padding:10px 13px;white-space:nowrap;}
 .sum-chart-toggle button:hover{color:var(--text2);}
 .sum-chart-toggle button.active{color:var(--green);background:var(--green-dim);}
 .sum-chart-svg{width:100%;height:260px;}
-.sum-two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px;align-items:stretch;}.sum-two-col>.sum-panel{height:100%;}
+.sum-two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px;align-items:stretch;}.sum-two-col>.sum-panel{height:100%;display:flex;flex-direction:column;}
 .sum-panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;}
 .sum-panel-hdr{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;}
 .sum-panel-title{font-family:var(--sans);font-size:12px;font-weight:600;color:var(--text2);letter-spacing:.06em;text-transform:uppercase;}
-.sum-panel-body{padding:6px 0;max-height:340px;overflow-y:auto;}
+.sum-panel-body{padding:6px 0;overflow-y:auto;flex:1;}
 .sum-exp-row{display:flex;align-items:center;gap:10px;padding:9px 18px;border-bottom:1px solid var(--border);font-size:12px;}
 .sum-exp-row:last-child{border-bottom:none;}
 .sum-exp-tk{font-family:var(--sans);font-weight:700;font-size:13px;min-width:54px;}
@@ -1569,7 +1569,7 @@ function _renderSummaryInner(container){
       <div class="sum-kpi"><div class="sum-kpi-label">Avg Prem / Trade</div><div class="sum-kpi-val">${fm(avgPremPerTrade)}</div><div class="sum-kpi-sub">net of fees</div></div>
       <div class="sum-kpi"><div class="sum-kpi-label">Theta Income</div><div class="sum-kpi-val tg">${fm(thetaIncome)}/d</div><div class="sum-kpi-sub">period avg</div></div>
       <div class="sum-kpi"><div class="sum-kpi-label">Capital in Shares</div><div class="sum-kpi-val ${assignedCost>0?'ta':''}">${fm(assignedCost)}</div><div class="sum-kpi-sub">${assignedCost>0?'assigned positions':'no assigned shares'}</div></div>
-      <div class="sum-kpi"><div class="sum-kpi-label">Capital in CSPs</div><div class="sum-kpi-val ${cspCollat>cap?'tr':cspCollat>cap*0.8?'ta':'tg'}">${fm(cspCollat)}</div><div class="sum-kpi-sub">${openAll.filter(t=>t.type==='P').length} open puts</div></div>
+      <div class="sum-kpi"><div class="sum-kpi-label">Capital in CSPs</div><div class="sum-kpi-val tr">${fm(cspCollat)}</div><div class="sum-kpi-sub">${openAll.filter(t=>t.type==='P').length} open puts</div></div>
       <div class="sum-kpi"><div class="sum-kpi-label">Diversification</div><div class="sum-kpi-val">${activeTickers}</div><div class="sum-kpi-sub">active tickers</div></div>
       <div class="sum-kpi"><div class="sum-kpi-label">Buying Power</div><div class="sum-kpi-val tg">${fm(buyingPower)}</div><div class="sum-kpi-sub">available</div></div>
       <div class="sum-kpi"><div class="sum-kpi-label">Open Positions</div><div class="sum-kpi-val">${openAll.length}</div><div class="sum-kpi-sub">${activeTickers} ticker${activeTickers!==1?'s':''}</div></div>
@@ -1649,7 +1649,7 @@ function _renderSummaryInner(container){
     upcoming=upcoming.filter(t=>fridayKeyOf(t.expDate)===summaryExpWeek);
   }
   upcoming.sort((a,b)=>new Date(a.expDate)-new Date(b.expDate));
-  const upcomingLimited=summaryExpWeek==='all'?upcoming.slice(0,12):upcoming;
+  const upcomingLimited=upcoming;
   // per-week counts for badges on buttons
   const weekCounts={};
   fridays.forEach(f=>{ const k=f.toISOString().slice(0,10); weekCounts[k]=0; });
