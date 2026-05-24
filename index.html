@@ -1775,29 +1775,18 @@ function _renderSummaryInner(container){
     }
   }
 
-  // weekly collateral risk: all CSPs expiring this calendar month, grouped by week
   const weeklyCollateral={};
   trades.forEach(t=>{
     if(t.type!=='P'||!t.expDate) return;
-    const _cDate=new Date(t.expDate+'T12:00:00');
-    if(_cDate.getFullYear()!==calY||_cDate.getMonth()!==calM) return;
-    const _cDay=_cDate.getDate();
-    const _cWk=Math.floor((firstDow+_cDay-1)/7);
-    const _cK=parseInt(t.contracts)||1;
-    const _cAmt=(parseFloat(t.strike)||0)*_cK*100;
-    if(!weeklyCollateral[_cWk]) weeklyCollateral[_cWk]={total:0,byTicker:{}};
-    weeklyCollateral[_cWk].total+=_cAmt;
-    const _cTk=t.ticker||'?';
-    weeklyCollateral[_cWk].byTicker[_cTk]=(weeklyCollateral[_cWk].byTicker[_cTk]||0)+_cAmt;
+    const _d=new Date(t.expDate+'T12:00:00');
+    if(_d.getFullYear()!==calY||_d.getMonth()!==calM) return;
+    const _wi=Math.floor((firstDow+_d.getDate()-1)/7);
+    const _ca=(parseFloat(t.strike)||0)*(parseInt(t.contracts)||1)*100;
+    if(!weeklyCollateral[_wi]) weeklyCollateral[_wi]={total:0,byTicker:{}};
+    weeklyCollateral[_wi].total+=_ca;
+    const _ct=t.ticker||'?';
+    weeklyCollateral[_wi].byTicker[_ct]=(weeklyCollateral[_wi].byTicker[_ct]||0)+_ca;
   });
-  function _buildCollHtml(wc, cid){
-    if(!wc) return '';
-    const brk=Object.entries(wc.byTicker).map(([t,v])=>t+' '+fm(v)).join(' · ');
-    return '<span onclick="toggleCollateral(''+cid+'',event)" style="cursor:pointer;display:flex;align-items:center;justify-content:center;gap:3px;font-size:8px;letter-spacing:.05em;text-transform:uppercase;color:var(--red);font-family:var(--sans);margin-top:4px;">'
-      +'<span id="'+cid+'-arrow" style="font-size:9px;">&#9658;</span>Collateral Risk</span>'
-      +'<span style="font-family:var(--sans);font-weight:700;font-size:11px;color:var(--red);">'+fm(wc.total)+'</span>'
-      +'<div id="'+cid+'" style="display:none;font-size:9px;color:var(--text3);text-align:center;line-height:1.6;padding:2px 4px 0;white-space:normal;">'+brk+'</div>';
-  }
 
   const dayCells=[];
   const dayLabels=['S','M','T','W','T','F','S'];
@@ -1817,12 +1806,17 @@ function _renderSummaryInner(container){
       const wt=weeklyTotals[weekIdx];
       const wc=weeklyCollateral[weekIdx];
       const _cid='cr-'+calY+'-'+calM+'-'+weekIdx;
-      const _collHtml=_buildCollHtml(wc,_cid);
-      dayCells.push(`<div class="sum-cal-day" style="background:var(--surface2);border:1px solid var(--border2);display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px;aspect-ratio:unset;min-height:${wc?'90px':'52px'};overflow:visible;">
-        <span style="font-size:8px;letter-spacing:.06em;text-transform:uppercase;color:var(--text3);font-family:var(--sans);">Wk Total</span>
-        <span style="font-family:var(--sans);font-weight:700;font-size:11px;" class="${wt&&wt.hasPl?(wt.pl>=0?'tg':'tr'):'td'}">${wt&&wt.hasPl?fm(wt.pl):'—'}</span>
-        ${_collHtml}
-      </div>`);
+      const _brk=wc?Object.entries(wc.byTicker).map(([a,b])=>a+' '+fm(b)).join(' · '):'';
+      const _ch=wc
+        ?'<span data-cid="'+_cid+'" onclick="toggleCollateral(this,event)" style="cursor:pointer;display:flex;align-items:center;justify-content:center;gap:3px;font-size:8px;letter-spacing:.05em;text-transform:uppercase;color:var(--red);font-family:var(--sans);margin-top:4px;"><span id="'+_cid+'-arrow">▸</span> Collateral Risk</span>'
+          +'<span style="font-family:var(--sans);font-weight:700;font-size:11px;color:var(--red);">'+fm(wc.total)+'</span>'
+          +'<div id="'+_cid+'" style="display:none;font-size:9px;color:var(--text3);text-align:center;line-height:1.6;padding:2px 4px 0;">'+_brk+'</div>'
+        :'';
+      dayCells.push('<div class="sum-cal-day" style="background:var(--surface2);border:1px solid var(--border2);display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px;aspect-ratio:unset;min-height:'+(wc?'90px':'52px')+';overflow:visible;">'
+        +'<span style="font-size:8px;letter-spacing:.06em;text-transform:uppercase;color:var(--text3);font-family:var(--sans);">Wk Total</span>'
+        +'<span style="font-family:var(--sans);font-weight:700;font-size:11px;" class="'+(wt&&wt.hasPl?(wt.pl>=0?'tg':'tr'):'td')+'">'+(wt&&wt.hasPl?fm(wt.pl):'—')+'</span>'
+        +_ch
+        +'</div>');
     } else {
       dayCells.push(`<div class="${cls}"${interactiveAttrs}><span class="sum-cal-num">${d}</span>${ev?`<span class="sum-cal-val ${ev.pl>=0?'tg':'tr'}">${fm(ev.pl)}</span>`:''}</div>`);
     }
@@ -1836,14 +1830,19 @@ function _renderSummaryInner(container){
     const wt=weeklyTotals[lastWeekIdx];
     const wce=weeklyCollateral[lastWeekIdx];
     const _cide='cr-'+calY+'-'+calM+'-'+lastWeekIdx;
-    const _collHtmlE=_buildCollHtml(wce,_cide);
+    const _brke=wce?Object.entries(wce.byTicker).map(([a,b])=>a+' '+fm(b)).join(' · '):'';
+    const _che=wce
+      ?'<span data-cid="'+_cide+'" onclick="toggleCollateral(this,event)" style="cursor:pointer;display:flex;align-items:center;justify-content:center;gap:3px;font-size:8px;letter-spacing:.05em;text-transform:uppercase;color:var(--red);font-family:var(--sans);margin-top:4px;"><span id="'+_cide+'-arrow">▸</span> Collateral Risk</span>'
+        +'<span style="font-family:var(--sans);font-weight:700;font-size:11px;color:var(--red);">'+fm(wce.total)+'</span>'
+        +'<div id="'+_cide+'" style="display:none;font-size:9px;color:var(--text3);text-align:center;line-height:1.6;padding:2px 4px 0;">'+_brke+'</div>'
+      :'';
     const emptiesNeeded=6-remainder; // days between last day and Saturday
     for(let i=0;i<emptiesNeeded;i++) dayCells.push('<div class="sum-cal-day empty"></div>');
-    dayCells.push(`<div class="sum-cal-day" style="background:var(--surface2);border:1px solid var(--border2);display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px;aspect-ratio:unset;min-height:${wce?'90px':'52px'};overflow:visible;">
-      <span style="font-size:8px;letter-spacing:.06em;text-transform:uppercase;color:var(--text3);font-family:var(--sans);">Wk Total</span>
-      <span style="font-family:var(--sans);font-weight:700;font-size:11px;" class="${wt&&wt.hasPl?(wt.pl>=0?'tg':'tr'):'td'}">${wt&&wt.hasPl?fm(wt.pl):'—'}</span>
-      ${_collHtmlE}
-    </div>`);
+    dayCells.push('<div class="sum-cal-day" style="background:var(--surface2);border:1px solid var(--border2);display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2px;aspect-ratio:unset;min-height:'+(wce?'90px':'52px')+';overflow:visible;">'
+      +'<span style="font-size:8px;letter-spacing:.06em;text-transform:uppercase;color:var(--text3);font-family:var(--sans);">Wk Total</span>'
+      +'<span style="font-family:var(--sans);font-weight:700;font-size:11px;" class="'+(wt&&wt.hasPl?(wt.pl>=0?'tg':'tr'):'td')+'">'+(wt&&wt.hasPl?fm(wt.pl):'—')+'</span>'
+      +_che
+      +'</div>');
   }
   const calMonthLbl=MONTHS[calM]+' '+calY;
   const calMonthTotal=Object.values(eventsByDay).reduce((s,e)=>s+e.pl,0);
@@ -3181,14 +3180,15 @@ function showDayDrilldown(dateStr){
 }
 function closeWeeklyModal(){ document.getElementById('modal-weekly').classList.remove('open'); }
 
-function toggleCollateral(id,e){
+function toggleCollateral(el,e){
   e.stopPropagation();
-  const el=document.getElementById(id);
-  if(!el) return;
-  const arrow=document.getElementById(id+'-arrow');
-  const hidden=el.style.display==='none'||!el.style.display;
-  el.style.display=hidden?'block':'none';
-  if(arrow) arrow.innerHTML=hidden?'&#9660;':'&#9658;';
+  const cid=el.dataset.cid;
+  const panel=document.getElementById(cid);
+  const arrow=document.getElementById(cid+'-arrow');
+  if(!panel) return;
+  const hidden=panel.style.display==='none'||!panel.style.display;
+  panel.style.display=hidden?'block':'none';
+  if(arrow) arrow.textContent=hidden?'▾':'▸';
 }
 function showCalTooltip(dateStr, ev){
   const tt=document.getElementById('cal-tooltip'); if(!tt) return;
