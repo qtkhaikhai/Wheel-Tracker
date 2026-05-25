@@ -2936,26 +2936,35 @@ function showWheelDetails(ticker, isUpdate, filterSet){
       var activeCls=activeSetFilter===s?' active':'';
       // Per-set share appreciation
       var _setLots=[];
+      var _setCalledAwayAppreciation=0;
       setTrades.filter(function(t){return t.type==='P'&&t.assigned==='Yes';}).forEach(function(t){
-        _setLots.push({shares:(parseInt(t.contracts)||1)*100,strike:parseFloat(t.strike)||0,date:cd(t)||t.expDate||''});
+        var sh=(parseInt(t.contracts)||1)*100;
+        var putStrike=parseFloat(t.strike)||0;
+        var prem=(parseFloat(t.premium)||0)*(parseInt(t.contracts)||1)*100;
+        var fees=parseFloat(t.openFees)||0;
+        var cb=putStrike-(prem-fees)/sh;
+        _setLots.push({shares:sh,strike:putStrike,costBasis:cb,date:cd(t)||t.expDate||''});
       });
       _setLots.sort(function(a,b){return new Date(a.date||0)-new Date(b.date||0);});
       setTrades.filter(function(t){return t.type==='C'&&t.assigned==='Yes';}).forEach(function(t){
+        var callStrike=parseFloat(t.strike)||0;
         var toRemove=(parseInt(t.contracts)||1)*100;
         for(var _j=0;_j<_setLots.length&&toRemove>0;_j++){
+          var sharesRemoved=Math.min(_setLots[_j].shares,toRemove);
+          _setCalledAwayAppreciation+=(callStrike-_setLots[_j].costBasis)*sharesRemoved;
           if(_setLots[_j].shares<=toRemove){toRemove-=_setLots[_j].shares;_setLots[_j].shares=0;}
           else{_setLots[_j].shares-=toRemove;toRemove=0;}
         }
         _setLots=_setLots.filter(function(l){return l.shares>0;});
       });
       longs.filter(function(l){return l.ticker===ticker&&l.shares&&l.price&&(parseInt(l.set)||1)===s;}).forEach(function(l){
-        _setLots.push({shares:parseFloat(l.shares)||0,strike:parseFloat(l.price)||0,date:l.date||''});
+        _setLots.push({shares:parseFloat(l.shares)||0,strike:parseFloat(l.price)||0,costBasis:parseFloat(l.price)||0,date:l.date||''});
       });
       var _setShares=_setLots.reduce(function(sm,l){return sm+l.shares;},0);
-      var _setInvested=_setLots.reduce(function(sm,l){return sm+l.shares*l.strike;},0);
+      var _setInvested=_setLots.reduce(function(sm,l){return sm+l.shares*l.costBasis;},0);
       var _setCostBasis=_setShares>0?_setInvested/_setShares:0;
       var _setAppreciation=(currentPrice!=null&&_setShares>0)?(currentPrice-_setCostBasis)*_setShares:0;
-      var setTotal=setTotalPrem+_setAppreciation;
+      var setTotal=setTotalPrem+_setAppreciation+_setCalledAwayAppreciation;
       var plLabel=(setTotal>=0?'+':'')+fm(setTotal);
       var plCls=setTotal>=0?'tg':'tr';
       out.push('<button class="wd-set-tab'+activeCls+'" onclick="showWheelDetails(\''+ticker+'\',true,'+s+')">'+openDot+'Set '+s+' <span class="set-pl '+plCls+'">'+plLabel+'</span></button>');
