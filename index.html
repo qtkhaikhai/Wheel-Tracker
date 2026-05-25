@@ -2907,6 +2907,7 @@ function showWheelDetails(ticker, isUpdate, filterSet){
       var _setInvested=_setLots.reduce(function(sm,l){return sm+l.shares*l.strike;},0);
       var _setCostBasis=_setShares>0?_setInvested/_setShares:0;
       var _setAppreciation=(_curPrice!=null&&_setShares>0)?(_curPrice-_setCostBasis)*_setShares:0;
+      if(s===6) console.log('[SET6 DEBUG] ticker='+ticker+' _curPrice='+_curPrice+' _setShares='+_setShares+' _setCostBasis='+_setCostBasis+' _setAppreciation='+_setAppreciation+' setClosedPL='+setClosedPL);
       var setTotal=setClosedPL+_setAppreciation;
       var plLabel=(setTotal>=0?'+':'')+fm(setTotal);
       var plCls=setTotal>=0?'tg':'tr';
