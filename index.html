@@ -2924,7 +2924,13 @@ function showWheelDetails(ticker, isUpdate, filterSet){
     for(var _i=0;_i<availSets.length;_i++){
       var s=availSets[_i];
       var setTrades=allTs.filter(function(t){return (parseInt(t.set)||1)===s;});
-      var setClosedPL=setTrades.filter(function(t){return cd(t);}).reduce(function(sum,t){return sum+(calcPL(t)||0);},0);
+      var _realPut=setTrades.filter(function(t){return t.type==='P'&&cd(t);}).reduce(function(sm,t){return sm+(calcPL(t)||0);},0);
+      var _realCall=setTrades.filter(function(t){return t.type==='C'&&cd(t);}).reduce(function(sm,t){return sm+(calcPL(t)||0);},0);
+      var _openPuts=setTrades.filter(function(t){return t.type==='P'&&!cd(t);});
+      var _openCalls=setTrades.filter(function(t){return t.type==='C'&&!cd(t);});
+      var _unrPut=_openPuts.reduce(function(sm,t){return sm+(parseFloat(t.premium)||0)*(parseInt(t.contracts)||1)*100-(parseFloat(t.openFees)||0);},0);
+      var _unrCall=_openCalls.reduce(function(sm,t){return sm+(parseFloat(t.premium)||0)*(parseInt(t.contracts)||1)*100-(parseFloat(t.openFees)||0);},0);
+      var setTotalPrem=_realPut+_realCall+_unrPut+_unrCall;
       var isOpen=setTrades.some(function(t){return !cd(t);});
       var openDot=isOpen?'&#9679; ':'';
       var activeCls=activeSetFilter===s?' active':'';
@@ -2949,7 +2955,7 @@ function showWheelDetails(ticker, isUpdate, filterSet){
       var _setInvested=_setLots.reduce(function(sm,l){return sm+l.shares*l.strike;},0);
       var _setCostBasis=_setShares>0?_setInvested/_setShares:0;
       var _setAppreciation=(currentPrice!=null&&_setShares>0)?(currentPrice-_setCostBasis)*_setShares:0;
-      var setTotal=setClosedPL+_setAppreciation;
+      var setTotal=setTotalPrem+_setAppreciation;
       var plLabel=(setTotal>=0?'+':'')+fm(setTotal);
       var plCls=setTotal>=0?'tg':'tr';
       out.push('<button class="wd-set-tab'+activeCls+'" onclick="showWheelDetails(\''+ticker+'\',true,'+s+')">'+openDot+'Set '+s+' <span class="set-pl '+plCls+'">'+plLabel+'</span></button>');
