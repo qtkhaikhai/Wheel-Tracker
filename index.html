@@ -2708,73 +2708,6 @@ document.getElementById('modal-weekly').addEventListener('click',e=>{ if(e.targe
 // ═══════════════════════════════════════
 //  POSITIONS
 // ═══════════════════════════════════════
-function buildDonut(filterType,titleLabel,centerLabel){
-  const PALETTE=['#00e5a0','#5b8dee','#ffb830','#ff4d6d','#a78bfa','#34d399','#fb923c','#38bdf8','#f472b6','#a3e635'];
-  const donutR=70,donutCx=85,donutCy=85,donutStroke=22;
-  const openT=trades.filter(t=>!cd(t)&&t.ticker);
-  const byT={};
-  openT.filter(t=>t.type===filterType).forEach(t=>{
-    if(!byT[t.ticker]) byT[t.ticker]={ticker:t.ticker,capital:0};
-    byT[t.ticker].capital+=(parseFloat(t.strike)||0)*(parseInt(t.contracts)||1)*100;
-  });
-  const grps=Object.values(byT).sort((a,b)=>b.capital-a.capital);
-  const total=grps.reduce((s,g)=>s+g.capital,0);
-  if(!grps.length) return `<div class="pos-chart-card" style="flex:1;min-width:0;"><div class="pos-chart-title">${titleLabel}</div><div style="display:flex;align-items:center;justify-content:center;height:170px;color:var(--text3);font-size:12px;">No open ${filterType==='P'?'puts':'calls'}</div></div>`;
-  const circumference=2*Math.PI*donutR;
-  let offset=0;
-  const segs=grps.map((g,i)=>{
-    const pct=g.capital/total,dash=pct*circumference,gap=circumference-dash;
-    const seg=`<circle cx="${donutCx}" cy="${donutCy}" r="${donutR}" fill="none" stroke="${PALETTE[i%PALETTE.length]}" stroke-width="${donutStroke}" stroke-dasharray="${dash.toFixed(2)} ${gap.toFixed(2)}" stroke-dashoffset="${(-offset).toFixed(2)}" transform="rotate(-90 ${donutCx} ${donutCy})"/>`;
-    offset+=dash;
-    return {seg,color:PALETTE[i%PALETTE.length],pct};
-  });
-  const legendItems=grps.slice(0,8).map((g,i)=>`
-    <div class="donut-legend-item">
-      <div class="donut-legend-dot" style="background:${segs[i].color}"></div>
-      <span class="donut-legend-name wd-ticker-link" onclick="showWheelDetails('${g.ticker}')">${g.ticker}</span>
-      <span class="donut-legend-val">${fm(g.capital)} <span style="color:var(--text3);font-weight:400;">· ${Math.round(segs[i].pct*100)}%</span></span>
-    </div>`).join('');
-  return `<div class="pos-chart-card" style="flex:1;min-width:0;">
-    <div class="pos-chart-title">${titleLabel}</div>
-    <div class="donut-wrap">
-      <svg width="170" height="170" style="flex-shrink:0;">
-        ${segs.map(s=>s.seg).join('')}
-        <text x="${donutCx}" y="${donutCy-6}" text-anchor="middle" fill="#8888a0" font-size="10" font-family="DM Mono,monospace">${centerLabel}</text>
-        <text x="${donutCx}" y="${donutCy+12}" text-anchor="middle" fill="#e8e8f0" font-size="13" font-family="Syne,sans-serif" font-weight="700">${fm(total)}</text>
-      </svg>
-      <div class="donut-legend">${legendItems}</div>
-    </div>
-  </div>`;
-}
-
-function getUncoveredShares(){
-  const holdings={};
-  trades.filter(t=>t.type==='P'&&t.assigned==='Yes').forEach(t=>{
-    const key=(t.ticker||'?')+'|'+(parseInt(t.set)||1);
-    if(!holdings[key]) holdings[key]={ticker:t.ticker,set:parseInt(t.set)||1,shares:0,totalCost:0};
-    const k=parseInt(t.contracts)||1,sh=k*100;
-    const netPrem=(parseFloat(t.premium)||0)*k*100-(parseFloat(t.openFees)||0)-(parseFloat(t.paidToClose)||0)-(parseFloat(t.closeFees)||0);
-    holdings[key].shares+=sh;
-    holdings[key].totalCost+=((parseFloat(t.strike)||0)-netPrem/sh)*sh;
-  });
-  longs.filter(l=>l.ticker&&l.shares&&l.price).forEach(l=>{
-    const key=(l.ticker||'?')+'|'+(parseInt(l.set)||1);
-    if(!holdings[key]) holdings[key]={ticker:l.ticker,set:parseInt(l.set)||1,shares:0,totalCost:0};
-    const sh=parseFloat(l.shares)||0;
-    holdings[key].shares+=sh;
-    holdings[key].totalCost+=sh*(parseFloat(l.price)||0);
-  });
-  trades.filter(t=>t.type==='C'&&!cd(t)).forEach(t=>{
-    const key=(t.ticker||'?')+'|'+(parseInt(t.set)||1);
-    if(!holdings[key]) return;
-    holdings[key].shares-=(parseInt(t.contracts)||1)*100;
-  });
-  return Object.values(holdings)
-    .filter(p=>p.shares>0.01)
-    .map(p=>({ticker:p.ticker,set:p.set,shares:Math.round(p.shares),costBasis:p.totalCost/p.shares}))
-    .sort((a,b)=>a.ticker.localeCompare(b.ticker)||(a.set-b.set));
-}
-
 function renderWheels(){
   const container=document.getElementById('pos-content');
   const open=trades.filter(t=>!cd(t)&&t.ticker);
@@ -2819,8 +2752,33 @@ function renderWheels(){
     <div class="stat-card"><div class="stat-label">Nearest Expiry</div><div class="stat-val ${minDTE!=null&&minDTE<=7?'r':minDTE!=null&&minDTE<=21?'a':''}">${minDTE!=null?minDTE+'d':'—'}</div><div class="stat-sub">days to expiration</div></div>
   </div>`;
 
-  // ── donut charts via global buildDonut()
-  const donutChart=`<div style="display:flex;gap:16px;flex-wrap:wrap;">${buildDonut('P','CSP Allocation','COLLATERAL')}${buildDonut('C','CC Allocation','NOTIONAL')}</div>`;
+  // ── donut charts (CSP + CC, side by side) ──
+  const PALETTE=['#00e5a0','#5b8dee','#ffb830','#ff4d6d','#a78bfa','#34d399','#fb923c','#38bdf8','#f472b6','#a3e635'];
+  const donutR=70,donutCx=85,donutCy=85,donutStroke=22,donutCirc=2*Math.PI*donutR;
+  const mkDonut=(ftype,tlabel,clabel)=>{
+    const byT2={};
+    open.filter(t=>t.type===ftype).forEach(t=>{
+      if(!byT2[t.ticker]) byT2[t.ticker]={ticker:t.ticker,capital:0};
+      byT2[t.ticker].capital+=(parseFloat(t.strike)||0)*(parseInt(t.contracts)||1)*100;
+    });
+    const grps2=Object.values(byT2).sort((a,b)=>b.capital-a.capital);
+    const tot2=grps2.reduce((s,g)=>s+g.capital,0);
+    if(!grps2.length) return `<div class="pos-chart-card" style="flex:1;min-width:0;"><div class="pos-chart-title">${tlabel}</div><div style="display:flex;align-items:center;justify-content:center;height:170px;color:var(--text3);font-size:12px;">No open ${ftype==='P'?'puts':'calls'}</div></div>`;
+    let off2=0;
+    const segs2=grps2.map((g,i)=>{
+      const pct=g.capital/tot2,dash=pct*donutCirc,gap=donutCirc-dash;
+      const seg=`<circle cx="${donutCx}" cy="${donutCy}" r="${donutR}" fill="none" stroke="${PALETTE[i%PALETTE.length]}" stroke-width="${donutStroke}" stroke-dasharray="${dash.toFixed(2)} ${gap.toFixed(2)}" stroke-dashoffset="${(-off2).toFixed(2)}" transform="rotate(-90 ${donutCx} ${donutCy})"/>`;
+      off2+=dash; return {seg,color:PALETTE[i%PALETTE.length],pct};
+    });
+    const leg2=grps2.slice(0,8).map((g,i)=>`
+      <div class="donut-legend-item">
+        <div class="donut-legend-dot" style="background:${segs2[i].color}"></div>
+        <span class="donut-legend-name wd-ticker-link" onclick="showWheelDetails('${g.ticker}')">${g.ticker}</span>
+        <span class="donut-legend-val">${fm(g.capital)} <span style="color:var(--text3);font-weight:400;">· ${Math.round(segs2[i].pct*100)}%</span></span>
+      </div>`).join('');
+    return `<div class="pos-chart-card" style="flex:1;min-width:0;"><div class="pos-chart-title">${tlabel}</div><div class="donut-wrap"><svg width="170" height="170" style="flex-shrink:0;">${segs2.map(s=>s.seg).join('')}<text x="${donutCx}" y="${donutCy-6}" text-anchor="middle" fill="#8888a0" font-size="10" font-family="DM Mono,monospace">${clabel}</text><text x="${donutCx}" y="${donutCy+12}" text-anchor="middle" fill="#e8e8f0" font-size="13" font-family="Syne,sans-serif" font-weight="700">${fm(tot2)}</text></svg><div class="donut-legend">${leg2}</div></div></div>`;
+  };
+  const donutChart=`<div style="display:flex;gap:16px;flex-wrap:wrap;">${mkDonut('P','CSP Allocation','COLLATERAL')}${mkDonut('C','CC Allocation','NOTIONAL')}</div>`;
 
   // ── position cards
   const cards=groups.map((g,gi)=>{
@@ -3473,38 +3431,65 @@ function renderShares(){
       '</table></div>';
   }
 
-  // ── Uncovered Shares section (above Called Away)
-  const uncovList=getUncoveredShares();
-  let calledAwayHtml='';
-  // Extract Called Away from html and rebuild order: donuts, shares held, uncovered, called away
-  // Instead: inject donuts at top and uncovered before called away marker
-  // We build uncovered block here and splice it in
-  const uncovHtml=uncovList.length?(
-    '<div class="sec-hdr" style="margin-top:24px;">'+
-      '<span class="sec-title">Uncovered Shares</span>'+
-      '<span class="td" style="font-size:11px;">'+uncovList.length+' position'+(uncovList.length!==1?'s':'')+' · no CC written</span>'+
-    '</div>'+
-    '<div class="tbl-wrap" style="max-height:220px;overflow-y:auto;"><table>'+
-      '<thead><tr><th>Ticker</th><th>Set</th><th>Uncovered Shares</th><th>Cost Basis / sh</th></tr></thead>'+
-      '<tbody>'+uncovList.map(p=>
-        '<tr>'+
-          '<td><span class="ticker">'+p.ticker+'</span></td>'+
-          '<td>Set '+p.set+'</td>'+
-          '<td style="font-weight:600;color:var(--amber);">'+p.shares.toLocaleString()+'</td>'+
-          '<td>$'+p.costBasis.toFixed(2)+'</td>'+
-        '</tr>'
-      ).join('')+'</tbody>'+
-    '</table></div>'
-  ):'';
+  // ── Build uncovered shares block ──
+  const _uncov=(()=>{
+    const h={};
+    trades.filter(t=>t.type==='P'&&t.assigned==='Yes').forEach(t=>{
+      const k=(t.ticker||'?')+'|'+(parseInt(t.set)||1);
+      if(!h[k]) h[k]={ticker:t.ticker,set:parseInt(t.set)||1,shares:0,totalCost:0};
+      const kk=parseInt(t.contracts)||1,sh=kk*100;
+      const net=(parseFloat(t.premium)||0)*kk*100-(parseFloat(t.openFees)||0)-(parseFloat(t.paidToClose)||0)-(parseFloat(t.closeFees)||0);
+      h[k].shares+=sh; h[k].totalCost+=((parseFloat(t.strike)||0)-net/sh)*sh;
+    });
+    longs.filter(l=>l.ticker&&l.shares&&l.price).forEach(l=>{
+      const k=(l.ticker||'?')+'|'+(parseInt(l.set)||1);
+      if(!h[k]) h[k]={ticker:l.ticker,set:parseInt(l.set)||1,shares:0,totalCost:0};
+      const sh=parseFloat(l.shares)||0; h[k].shares+=sh; h[k].totalCost+=sh*(parseFloat(l.price)||0);
+    });
+    trades.filter(t=>t.type==='C'&&!cd(t)).forEach(t=>{
+      const k=(t.ticker||'?')+'|'+(parseInt(t.set)||1);
+      if(!h[k]) return; h[k].shares-=(parseInt(t.contracts)||1)*100;
+    });
+    return Object.values(h).filter(p=>p.shares>0.01)
+      .map(p=>({ticker:p.ticker,set:p.set,shares:Math.round(p.shares),costBasis:p.totalCost/p.shares}))
+      .sort((a,b)=>a.ticker.localeCompare(b.ticker)||(a.set-b.set));
+  })();
+  const _uncovHtml=_uncov.length
+    ? '<div class="sec-hdr" style="margin-top:24px;"><span class="sec-title">Uncovered Shares</span><span class="td" style="font-size:11px;">'+_uncov.length+' position'+(_uncov.length!==1?'s':'')+' \xb7 no CC written</span></div>'
+      +'<div class="tbl-wrap" style="max-height:220px;overflow-y:auto;"><table>'
+      +'<thead><tr><th>Ticker</th><th>Set</th><th>Uncovered Shares</th><th>Cost Basis / sh</th></tr></thead>'
+      +'<tbody>'+_uncov.map(p=>'<tr><td><span class="ticker">'+p.ticker+'</span></td><td>Set '+p.set+'</td><td style="font-weight:600;color:var(--amber);">'+p.shares.toLocaleString()+'</td><td>$'+p.costBasis.toFixed(2)+'</td></tr>').join('')+'</tbody></table></div>'
+    : '';
 
-  // Insert donuts at top, then uncovered before called away marker
-  const CALLED_AWAY_MARKER='<div class="sec-hdr" style="margin-top:24px;"><span class="sec-title">Called Away</span>';
-  const donutsHtml='<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:20px;">'+buildDonut('P','CSP Allocation','COLLATERAL')+buildDonut('C','CC Allocation','NOTIONAL')+'</div>';
-  const idx=html.indexOf(CALLED_AWAY_MARKER);
-  if(idx>=0){
-    html=donutsHtml+html.slice(0,idx)+uncovHtml+html.slice(idx);
+  // ── Inject donuts at top, splice uncovered before Called Away ──
+  const _PALETTE=['#00e5a0','#5b8dee','#ffb830','#ff4d6d','#a78bfa','#34d399','#fb923c','#38bdf8','#f472b6','#a3e635'];
+  const _donutR=70,_donutCx=85,_donutCy=85,_donutStroke=22,_donutCirc=2*Math.PI*_donutR;
+  const _mkD=(ftype,tlabel,clabel)=>{
+    const _byT={};
+    trades.filter(t=>!cd(t)&&t.ticker&&t.type===ftype).forEach(t=>{
+      if(!_byT[t.ticker]) _byT[t.ticker]={ticker:t.ticker,capital:0};
+      _byT[t.ticker].capital+=(parseFloat(t.strike)||0)*(parseInt(t.contracts)||1)*100;
+    });
+    const _g=Object.values(_byT).sort((a,b)=>b.capital-a.capital);
+    const _tot=_g.reduce((s,g)=>s+g.capital,0);
+    if(!_g.length) return '<div class="pos-chart-card" style="flex:1;min-width:0;"><div class="pos-chart-title">'+tlabel+'</div><div style="display:flex;align-items:center;justify-content:center;height:170px;color:var(--text3);font-size:12px;">No open '+(ftype==='P'?'puts':'calls')+'</div></div>';
+    let _off=0;
+    const _segs=_g.map((g,i)=>{
+      const pct=g.capital/_tot,dash=pct*_donutCirc,gap=_donutCirc-dash;
+      const seg='<circle cx="'+_donutCx+'" cy="'+_donutCy+'" r="'+_donutR+'" fill="none" stroke="'+_PALETTE[i%_PALETTE.length]+'" stroke-width="'+_donutStroke+'" stroke-dasharray="'+dash.toFixed(2)+' '+gap.toFixed(2)+'" stroke-dashoffset="'+(-_off).toFixed(2)+'" transform="rotate(-90 '+_donutCx+' '+_donutCy+')"/>';
+      _off+=dash; return {seg,color:_PALETTE[i%_PALETTE.length],pct};
+    });
+    const _leg=_g.slice(0,8).map((g,i)=>'<div class="donut-legend-item"><div class="donut-legend-dot" style="background:'+_segs[i].color+'"></div><span class="donut-legend-name wd-ticker-link" onclick="showWheelDetails(\''+g.ticker+'\')">'+g.ticker+'</span><span class="donut-legend-val">'+fm(g.capital)+' <span style="color:var(--text3);font-weight:400;">· '+Math.round(_segs[i].pct*100)+'%</span></span></div>').join('');
+    return '<div class="pos-chart-card" style="flex:1;min-width:0;"><div class="pos-chart-title">'+tlabel+'</div><div class="donut-wrap"><svg width="170" height="170" style="flex-shrink:0;">'+_segs.map(s=>s.seg).join('')+'<text x="'+_donutCx+'" y="'+(+_donutCy-6)+'" text-anchor="middle" fill="#8888a0" font-size="10" font-family="DM Mono,monospace">'+clabel+'</text><text x="'+_donutCx+'" y="'+(+_donutCy+12)+'" text-anchor="middle" fill="#e8e8f0" font-size="13" font-family="Syne,sans-serif" font-weight="700">'+fm(_tot)+'</text></svg><div class="donut-legend">'+_leg+'</div></div></div>';
+  };
+  const _donuts='<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:20px;">'+_mkD('P','CSP Allocation','COLLATERAL')+_mkD('C','CC Allocation','NOTIONAL')+'</div>';
+
+  const _CA_MARKER='<div class="sec-hdr" style="margin-top:24px;"><span class="sec-title">Called Away</span>';
+  const _idx=html.indexOf(_CA_MARKER);
+  if(_idx>=0){
+    html=_donuts+html.slice(0,_idx)+_uncovHtml+html.slice(_idx);
   } else {
-    html=donutsHtml+html+uncovHtml;
+    html=_donuts+html+_uncovHtml;
   }
   container.innerHTML=html;
 }
