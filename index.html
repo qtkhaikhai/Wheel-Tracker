@@ -581,6 +581,7 @@ tbody td{padding:10px 13px;white-space:nowrap;}
       <button class="fbtn" onclick="flt('call',this)">Calls</button>
       <button class="fbtn" onclick="flt('assigned',this)">Assigned</button>
       <input class="fsearch" type="text" placeholder="Search ticker…" oninput="logSearch=this.value.toUpperCase();renderLog()"/>
+
     </div>
     <div class="fbar fbar-date">
       <span style="font-size:10px;color:var(--text3);letter-spacing:.06em;text-transform:uppercase;">Date range:</span>
@@ -597,9 +598,7 @@ tbody td{padding:10px 13px;white-space:nowrap;}
     </div>
     <div style="margin-bottom:12px;"><button class="btn-primary" onclick="addRow()">+ Add Row</button></div>
     <div class="log-outer" id="log-outer"></div>
-    <div style="display:flex;justify-content:flex-end;margin-top:8px;">
-      <button onclick="clearAll()" style="background:none;border:1px solid var(--red-dim);color:var(--red);font-family:var(--mono);font-size:10px;padding:5px 12px;border-radius:6px;cursor:pointer;letter-spacing:.05em;" onmouseover="this.style.borderColor='var(--red)'" onmouseout="this.style.borderColor='var(--red-dim)'">⌫ Clear All</button>
-    </div>
+    <div style="display:flex;justify-content:flex-end;margin-top:8px;"><button onclick="clearAll()" style="background:none;border:1px solid var(--red-dim);color:var(--red);font-family:var(--mono);font-size:10px;padding:5px 12px;border-radius:6px;cursor:pointer;letter-spacing:.05em;" onmouseover="this.style.borderColor='var(--red)'" onmouseout="this.style.borderColor='var(--red-dim)'">⌫ Clear All</button></div>
   </div>
 
   <!-- WHEELS (open option positions) -->
@@ -1732,7 +1731,7 @@ function _renderSummaryInner(container){
         ${expWeekBtns}
       </div>
       ${totalsRow}
-      <div class="sum-panel-body" style="max-height:320px;">${expRows||`<div style="padding:30px;text-align:center;color:var(--text3);font-size:12px;">${expEmpty}</div>`}</div>
+      <div class="sum-panel-body" style="max-height:320px;overflow-y:auto;">${expRows||`<div style="padding:30px;text-align:center;color:var(--text3);font-size:12px;">${expEmpty}</div>`}</div>
     </div>`;
 
   // ──────── INCOME CALENDAR
@@ -2752,34 +2751,45 @@ function renderWheels(){
     <div class="stat-card"><div class="stat-label">Nearest Expiry</div><div class="stat-val ${minDTE!=null&&minDTE<=7?'r':minDTE!=null&&minDTE<=21?'a':''}">${minDTE!=null?minDTE+'d':'—'}</div><div class="stat-sub">days to expiration</div></div>
   </div>`;
 
-  // ── donut charts (CSP + CC, side by side) ──
+  // ── donut charts (CSP + CC capital allocation)
   const PALETTE=['#00e5a0','#5b8dee','#ffb830','#ff4d6d','#a78bfa','#34d399','#fb923c','#38bdf8','#f472b6','#a3e635'];
-  const donutR=70,donutCx=85,donutCy=85,donutStroke=22,donutCirc=2*Math.PI*donutR;
   const mkDonut=(ftype,tlabel,clabel)=>{
     const byT2={};
     open.filter(t=>t.type===ftype).forEach(t=>{
       if(!byT2[t.ticker]) byT2[t.ticker]={ticker:t.ticker,capital:0};
       byT2[t.ticker].capital+=(parseFloat(t.strike)||0)*(parseInt(t.contracts)||1)*100;
     });
-    const grps2=Object.values(byT2).sort((a,b)=>b.capital-a.capital);
-    const tot2=grps2.reduce((s,g)=>s+g.capital,0);
-    if(!grps2.length) return `<div class="pos-chart-card" style="flex:1;min-width:0;"><div class="pos-chart-title">${tlabel}</div><div style="display:flex;align-items:center;justify-content:center;height:170px;color:var(--text3);font-size:12px;">No open ${ftype==='P'?'puts':'calls'}</div></div>`;
-    let off2=0;
-    const segs2=grps2.map((g,i)=>{
-      const pct=g.capital/tot2,dash=pct*donutCirc,gap=donutCirc-dash;
-      const seg=`<circle cx="${donutCx}" cy="${donutCy}" r="${donutR}" fill="none" stroke="${PALETTE[i%PALETTE.length]}" stroke-width="${donutStroke}" stroke-dasharray="${dash.toFixed(2)} ${gap.toFixed(2)}" stroke-dashoffset="${(-off2).toFixed(2)}" transform="rotate(-90 ${donutCx} ${donutCy})"/>`;
-      off2+=dash; return {seg,color:PALETTE[i%PALETTE.length],pct};
+    const items=Object.values(byT2).sort((a,b)=>b.capital-a.capital);
+    const total=items.reduce((s,g)=>s+g.capital,0);
+    if(!items.length) return `<div class="pos-chart-card" style="flex:1;min-width:200px;"><div class="pos-chart-title">${tlabel}</div><div style="padding:30px;text-align:center;color:var(--text3);font-size:12px;">No open ${ftype==='P'?'puts':'calls'}</div></div>`;
+    const R=70,CX=85,CY=85,SW=22,circ=2*Math.PI*R;
+    let off=0;
+    const segs=items.map((g,i)=>{
+      const pct=g.capital/total;
+      const dash=pct*circ;
+      const seg=`<circle cx="${CX}" cy="${CY}" r="${R}" fill="none" stroke="${PALETTE[i%PALETTE.length]}" stroke-width="${SW}" stroke-dasharray="${dash.toFixed(2)} ${(circ-dash).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(-90 ${CX} ${CY})"/>`;
+      off+=dash;
+      return {seg,pct,color:PALETTE[i%PALETTE.length]};
     });
-    const leg2=grps2.slice(0,8).map((g,i)=>`
+    const legend=items.slice(0,8).map((g,i)=>`
       <div class="donut-legend-item">
-        <div class="donut-legend-dot" style="background:${segs2[i].color}"></div>
+        <div class="donut-legend-dot" style="background:${PALETTE[i%PALETTE.length]}"></div>
         <span class="donut-legend-name wd-ticker-link" onclick="showWheelDetails('${g.ticker}')">${g.ticker}</span>
-        <span class="donut-legend-val">${fm(g.capital)} <span style="color:var(--text3);font-weight:400;">· ${Math.round(segs2[i].pct*100)}%</span></span>
+        <span class="donut-legend-val">${fm(g.capital)} <span style="color:var(--text3);font-weight:400;">· ${Math.round(segs[i].pct*100)}%</span></span>
       </div>`).join('');
-    return `<div class="pos-chart-card" style="flex:1;min-width:0;"><div class="pos-chart-title">${tlabel}</div><div class="donut-wrap"><svg width="170" height="170" style="flex-shrink:0;">${segs2.map(s=>s.seg).join('')}<text x="${donutCx}" y="${donutCy-6}" text-anchor="middle" fill="#8888a0" font-size="10" font-family="DM Mono,monospace">${clabel}</text><text x="${donutCx}" y="${donutCy+12}" text-anchor="middle" fill="#e8e8f0" font-size="13" font-family="Syne,sans-serif" font-weight="700">${fm(tot2)}</text></svg><div class="donut-legend">${leg2}</div></div></div>`;
+    return `<div class="pos-chart-card" style="flex:1;min-width:200px;">
+      <div class="pos-chart-title">${tlabel} <span style="color:var(--text3);font-size:10px;font-weight:400;">${clabel}</span></div>
+      <div class="donut-wrap">
+        <svg width="170" height="170" style="flex-shrink:0;">
+          ${segs.map(s=>s.seg).join('')}
+          <text x="${CX}" y="${CY-6}" text-anchor="middle" fill="#8888a0" font-size="10" font-family="DM Mono,monospace">${clabel}</text>
+          <text x="${CX}" y="${CY+12}" text-anchor="middle" fill="#e8e8f0" font-size="13" font-family="Syne,sans-serif" font-weight="700">${fm(total)}</text>
+        </svg>
+        <div class="donut-legend">${legend}</div>
+      </div>
+    </div>`;
   };
   const donutChart=`<div style="display:flex;gap:16px;flex-wrap:wrap;">${mkDonut('P','CSP Allocation','COLLATERAL')}${mkDonut('C','CC Allocation','NOTIONAL')}</div>`;
-
   // ── position cards
   const cards=groups.map((g,gi)=>{
     const color=PALETTE[gi%PALETTE.length];
@@ -2867,17 +2877,40 @@ function showWheelDetails(ticker, isUpdate, filterSet){
 
   // Build set tab bar
   const _setTabButtons=(function(){
+    var _curPrice=sharePrices[ticker]!=null?parseFloat(sharePrices[ticker]):null;
     var out=[];
     for(var _i=0;_i<availSets.length;_i++){
       var s=availSets[_i];
       var setTrades=allTs.filter(function(t){return (parseInt(t.set)||1)===s;});
       var setClosedPL=setTrades.filter(function(t){return cd(t);}).reduce(function(sum,t){return sum+(calcPL(t)||0);},0);
       var isOpen=setTrades.some(function(t){return !cd(t);});
-      var plLabel=(setClosedPL>=0?'+':'')+fm(setClosedPL);
       var openDot=isOpen?'&#9679; ':'';
       var activeCls=activeSetFilter===s?' active':'';
-      var plCls=setClosedPL>=0?'tg':'tr';
-      out.push('<button class="wd-set-tab'+activeCls+'" onclick="showWheelDetails(\''+ticker+'\',true,'+s+')">'+openDot+'Set '+s+' <span class="set-pl '+plCls+'">'+plLabel+'</span></button>');
+      // Per-set share appreciation
+      var _setLots=[];
+      setTrades.filter(function(t){return t.type==='P'&&t.assigned==='Yes';}).forEach(function(t){
+        _setLots.push({shares:(parseInt(t.contracts)||1)*100,strike:parseFloat(t.strike)||0,date:cd(t)||t.expDate||''});
+      });
+      _setLots.sort(function(a,b){return new Date(a.date||0)-new Date(b.date||0);});
+      setTrades.filter(function(t){return t.type==='C'&&t.assigned==='Yes';}).forEach(function(t){
+        var toRemove=(parseInt(t.contracts)||1)*100;
+        for(var _j=0;_j<_setLots.length&&toRemove>0;_j++){
+          if(_setLots[_j].shares<=toRemove){toRemove-=_setLots[_j].shares;_setLots[_j].shares=0;}
+          else{_setLots[_j].shares-=toRemove;toRemove=0;}
+        }
+        _setLots=_setLots.filter(function(l){return l.shares>0;});
+      });
+      longs.filter(function(l){return l.ticker===ticker&&l.shares&&l.price&&(parseInt(l.set)||1)===s;}).forEach(function(l){
+        _setLots.push({shares:parseFloat(l.shares)||0,strike:parseFloat(l.price)||0,date:l.date||''});
+      });
+      var _setShares=_setLots.reduce(function(sm,l){return sm+l.shares;},0);
+      var _setInvested=_setLots.reduce(function(sm,l){return sm+l.shares*l.strike;},0);
+      var _setCostBasis=_setShares>0?_setInvested/_setShares:0;
+      var _setAppreciation=(_curPrice!=null&&_setShares>0)?(_curPrice-_setCostBasis)*_setShares:0;
+      var setTotal=setClosedPL+_setAppreciation;
+      var plLabel=(setTotal>=0?'+':'')+fm(setTotal);
+      var plCls=setTotal>=0?'tg':'tr';
+      out.push('<button class="wd-set-tab'+activeCls+'" onclick="showWheelDetails(''+ticker+'',true,'+s+')">'+openDot+'Set '+s+' <span class="set-pl '+plCls+'">'+plLabel+'</span></button>');
     }
     return out.join('');
   })();
@@ -3400,7 +3433,56 @@ function renderShares(){
       '</table></div>';
   }
 
+  // ── Section: Uncovered Shares
+  const _uncov=(function(){
+    const _byT={};
+    trades.filter(t=>t.type==='P'&&t.assigned==='Yes'&&t.ticker).forEach(t=>{
+      const k=t.ticker;
+      if(!_byT[k]) _byT[k]={ticker:k,lots:[]};
+      _byT[k].lots.push({shares:(parseInt(t.contracts)||1)*100,date:cd(t)||t.expDate||''});
+    });
+    trades.filter(t=>t.type==='C'&&t.assigned==='Yes'&&t.ticker&&_byT[t.ticker]).forEach(t=>{
+      let rem=(parseInt(t.contracts)||1)*100;
+      const ls=_byT[t.ticker].lots;
+      for(let _j=0;_j<ls.length&&rem>0;_j++){
+        if(ls[_j].shares<=rem){rem-=ls[_j].shares;ls[_j].shares=0;}
+        else{ls[_j].shares-=rem;rem=0;}
+      }
+      _byT[t.ticker].lots=ls.filter(l=>l.shares>0);
+    });
+    longs.filter(l=>l.ticker&&l.shares&&l.price).forEach(l=>{
+      const k=l.ticker;
+      if(!_byT[k]) _byT[k]={ticker:k,lots:[]};
+      _byT[k].lots.push({shares:parseFloat(l.shares)||0,date:l.date||'',isLong:true});
+    });
+    // Subtract shares currently under open CCs
+    trades.filter(t=>t.type==='C'&&!cd(t)&&t.ticker&&_byT[t.ticker]).forEach(t=>{
+      let rem=(parseInt(t.contracts)||1)*100;
+      const ls=_byT[t.ticker].lots;
+      for(let _j=0;_j<ls.length&&rem>0;_j++){
+        if(ls[_j].shares<=rem){rem-=ls[_j].shares;ls[_j].shares=0;}
+        else{ls[_j].shares-=rem;rem=0;}
+      }
+    });
+    return Object.values(_byT).map(g=>({ticker:g.ticker,shares:g.lots.reduce((s,l)=>s+l.shares,0)})).filter(g=>g.shares>0.01).sort((a,b)=>a.ticker.localeCompare(b.ticker));
+  })();
+
+  let _uncovHtml='';
+  if(_uncov.length){
+    const _ucRows=_uncov.map(g=>'<tr><td><span class="ticker">'+g.ticker+'</span></td><td style="font-weight:500;">'+g.shares.toLocaleString()+'</td></tr>').join('');
+    _uncovHtml=
+      '<div class="sec-hdr" style="margin-top:24px;">'+
+        '<span class="sec-title">Uncovered Shares</span>'+
+        '<span class="td" style="font-size:11px;">Assigned shares not under an active covered call</span>'+
+      '</div>'+
+      '<div class="tbl-wrap" style="max-height:220px;overflow-y:auto;"><table>'+
+        '<thead><tr><th>Ticker</th><th>Uncovered Shares</th></tr></thead>'+
+        '<tbody>'+_ucRows+'</tbody>'+
+      '</table></div>';
+  }
+
   // ── Section: Called Away
+  let _caHtml='';
   if(calledAway.length){
     const caRows=calledAway.map(g=>
       g.calledAway.map(l=>
@@ -3411,13 +3493,12 @@ function renderShares(){
           '<td class="ta">$'+l.costBasis.toFixed(2)+'</td>'+
           '<td>$'+l.callStrike.toFixed(2)+'</td>'+
           '<td class="tg">'+fm(l.premiumCall)+'</td>'+
-          '<td class="'+( l.gain>=0?'tg':'tr')+'">'+fm(l.gain)+'</td>'+
+          '<td class="'+(l.gain>=0?'tg':'tr')+'">'+fm(l.gain)+'</td>'+
           '<td class="td">'+fd(l.callDate)+'</td>'+
         '</tr>'
       ).join('')
     ).join('');
-
-    html+=
+    _caHtml=
       '<div class="sec-hdr" style="margin-top:24px;">'+
         '<span class="sec-title">Called Away</span>'+
         '<span class="td" style="font-size:11px;">Shares sold via covered call assignment</span>'+
@@ -3431,67 +3512,33 @@ function renderShares(){
       '</table></div>';
   }
 
-  // ── Uncovered shares ──
-  const _uncov=(()=>{
-    const h={};
-    trades.filter(t=>t.type==='P'&&t.assigned==='Yes').forEach(t=>{
-      const k=(t.ticker||'?')+'|'+(parseInt(t.set)||1);
-      if(!h[k]) h[k]={ticker:t.ticker,set:parseInt(t.set)||1,shares:0,totalCost:0};
-      const kk=parseInt(t.contracts)||1,sh=kk*100;
-      const net=(parseFloat(t.premium)||0)*kk*100-(parseFloat(t.openFees)||0)-(parseFloat(t.paidToClose)||0)-(parseFloat(t.closeFees)||0);
-      h[k].shares+=sh; h[k].totalCost+=((parseFloat(t.strike)||0)-net/sh)*sh;
+  // ── Donuts
+  const _mkD=(ftype,tlabel,clabel,openT)=>{
+    const _byT3={};
+    openT.filter(t=>t.type===ftype).forEach(t=>{
+      if(!_byT3[t.ticker]) _byT3[t.ticker]={ticker:t.ticker,capital:0};
+      _byT3[t.ticker].capital+=(parseFloat(t.strike)||0)*(parseInt(t.contracts)||1)*100;
     });
-    longs.filter(l=>l.ticker&&l.shares&&l.price).forEach(l=>{
-      const k=(l.ticker||'?')+'|'+(parseInt(l.set)||1);
-      if(!h[k]) h[k]={ticker:l.ticker,set:parseInt(l.set)||1,shares:0,totalCost:0};
-      const sh=parseFloat(l.shares)||0; h[k].shares+=sh; h[k].totalCost+=sh*(parseFloat(l.price)||0);
-    });
-    trades.filter(t=>t.type==='C'&&!cd(t)).forEach(t=>{
-      const k=(t.ticker||'?')+'|'+(parseInt(t.set)||1);
-      if(!h[k]) return; h[k].shares-=(parseInt(t.contracts)||1)*100;
-    });
-    return Object.values(h).filter(p=>p.shares>0.01)
-      .map(p=>({ticker:p.ticker,set:p.set,shares:Math.round(p.shares),costBasis:p.totalCost/p.shares}))
-      .sort((a,b)=>a.ticker.localeCompare(b.ticker)||(a.set-b.set));
-  })();
-  const _uncovHtml=_uncov.length
-    ? '<div class="sec-hdr" style="margin-top:24px;"><span class="sec-title">Uncovered Shares</span><span class="td" style="font-size:11px;">'+_uncov.length+' position'+(_uncov.length!==1?'s':'')+' \xb7 no CC written</span></div>'
-      +'<div class="tbl-wrap" style="max-height:220px;overflow-y:auto;"><table>'
-      +'<thead><tr><th>Ticker</th><th>Set</th><th>Uncovered Shares</th><th>Cost Basis / sh</th></tr></thead>'
-      +'<tbody>'+_uncov.map(p=>'<tr><td><span class="ticker">'+p.ticker+'</span></td><td>Set '+p.set+'</td><td style="font-weight:600;color:var(--amber);">'+p.shares.toLocaleString()+'</td><td>$'+p.costBasis.toFixed(2)+'</td></tr>').join('')+'</tbody></table></div>'
-    : '';
-
-  // ── Donuts for positions tab ──
-  const _PALETTE=['#00e5a0','#5b8dee','#ffb830','#ff4d6d','#a78bfa','#34d399','#fb923c','#38bdf8','#f472b6','#a3e635'];
-  const _donutR=70,_donutCx=85,_donutCy=85,_donutStroke=22,_donutCirc=2*Math.PI*_donutR;
-  const _mkD=(ftype,tlabel,clabel)=>{
-    const _byT={};
-    trades.filter(t=>!cd(t)&&t.ticker&&t.type===ftype).forEach(t=>{
-      if(!_byT[t.ticker]) _byT[t.ticker]={ticker:t.ticker,capital:0};
-      _byT[t.ticker].capital+=(parseFloat(t.strike)||0)*(parseInt(t.contracts)||1)*100;
-    });
-    const _g=Object.values(_byT).sort((a,b)=>b.capital-a.capital);
-    const _tot=_g.reduce((s,g)=>s+g.capital,0);
-    if(!_g.length) return '<div class="pos-chart-card" style="flex:1;min-width:0;"><div class="pos-chart-title">'+tlabel+'</div><div style="display:flex;align-items:center;justify-content:center;height:170px;color:var(--text3);font-size:12px;">No open '+(ftype==='P'?'puts':'calls')+'</div></div>';
+    const _items=Object.values(_byT3).sort((a,b)=>b.capital-a.capital);
+    const _total=_items.reduce((s,g)=>s+g.capital,0);
+    const _PAL=['#00e5a0','#5b8dee','#ffb830','#ff4d6d','#a78bfa','#34d399','#fb923c','#38bdf8','#f472b6','#a3e635'];
+    if(!_items.length) return `<div class="pos-chart-card" style="flex:1;min-width:200px;"><div class="pos-chart-title">${tlabel}</div><div style="padding:20px;text-align:center;color:var(--text3);font-size:12px;">No open ${ftype==='P'?'puts':'calls'}</div></div>`;
+    const _R=60,_CX=75,_CY=75,_SW=18,_circ=2*Math.PI*_R;
     let _off=0;
-    const _segs=_g.map((g,i)=>{
-      const pct=g.capital/_tot,dash=pct*_donutCirc,gap=_donutCirc-dash;
-      const seg='<circle cx="'+_donutCx+'" cy="'+_donutCy+'" r="'+_donutR+'" fill="none" stroke="'+_PALETTE[i%_PALETTE.length]+'" stroke-width="'+_donutStroke+'" stroke-dasharray="'+dash.toFixed(2)+' '+gap.toFixed(2)+'" stroke-dashoffset="'+(-_off).toFixed(2)+'" transform="rotate(-90 '+_donutCx+' '+_donutCy+')"/>';
-      _off+=dash; return {seg,color:_PALETTE[i%_PALETTE.length],pct};
+    const _segs=_items.map((g,i)=>{
+      const pct=g.capital/_total;
+      const dash=pct*_circ;
+      const seg=`<circle cx="${_CX}" cy="${_CY}" r="${_R}" fill="none" stroke="${_PAL[i%_PAL.length]}" stroke-width="${_SW}" stroke-dasharray="${dash.toFixed(2)} ${(_circ-dash).toFixed(2)}" stroke-dashoffset="${(-_off).toFixed(2)}" transform="rotate(-90 ${_CX} ${_CY})"/>`;
+      _off+=dash;
+      return {seg,pct,color:_PAL[i%_PAL.length]};
     });
-    const _leg=_g.slice(0,8).map((g,i)=>'<div class="donut-legend-item"><div class="donut-legend-dot" style="background:'+_segs[i].color+'"></div><span class="donut-legend-name wd-ticker-link" onclick="showWheelDetails(\''+g.ticker+'\')">'+g.ticker+'</span><span class="donut-legend-val">'+fm(g.capital)+' <span style="color:var(--text3);font-weight:400;">· '+Math.round(_segs[i].pct*100)+'%</span></span></div>').join('');
-    return '<div class="pos-chart-card" style="flex:1;min-width:0;"><div class="pos-chart-title">'+tlabel+'</div><div class="donut-wrap"><svg width="170" height="170" style="flex-shrink:0;">'+_segs.map(s=>s.seg).join('')+'<text x="'+_donutCx+'" y="'+(+_donutCy-6)+'" text-anchor="middle" fill="#8888a0" font-size="10" font-family="DM Mono,monospace">'+clabel+'</text><text x="'+_donutCx+'" y="'+(+_donutCy+12)+'" text-anchor="middle" fill="#e8e8f0" font-size="13" font-family="Syne,sans-serif" font-weight="700">'+fm(_tot)+'</text></svg><div class="donut-legend">'+_leg+'</div></div></div>';
+    const _leg=_items.slice(0,8).map((g,i)=>`<div class="donut-legend-item"><div class="donut-legend-dot" style="background:${_PAL[i%_PAL.length]}"></div><span class="donut-legend-name wd-ticker-link" onclick="showWheelDetails('${g.ticker}')">${g.ticker}</span><span class="donut-legend-val">${fm(g.capital)} <span style="color:var(--text3);font-weight:400;">· ${Math.round(_segs[i].pct*100)}%</span></span></div>`).join('');
+    return `<div class="pos-chart-card" style="flex:1;min-width:200px;"><div class="pos-chart-title">${tlabel} <span style="color:var(--text3);font-size:10px;font-weight:400;">${clabel}</span></div><div class="donut-wrap"><svg width="150" height="150" style="flex-shrink:0;">${_segs.map(s=>s.seg).join('')}<text x="${_CX}" y="${_CY-4}" text-anchor="middle" fill="#8888a0" font-size="9" font-family="DM Mono,monospace">${clabel}</text><text x="${_CX}" y="${_CY+11}" text-anchor="middle" fill="#e8e8f0" font-size="12" font-family="Syne,sans-serif" font-weight="700">${fm(_total)}</text></svg><div class="donut-legend">${_leg}</div></div></div>`;
   };
-  const _donuts='<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:20px;">'+_mkD('P','CSP Allocation','COLLATERAL')+_mkD('C','CC Allocation','NOTIONAL')+'</div>';
+  const _openAll=trades.filter(t=>!cd(t)&&t.ticker);
+  const _donuts=`<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:20px;">${_mkD('P','CSP Collateral','COLLATERAL',_openAll)}${_mkD('C','CC Notional','NOTIONAL',_openAll)}</div>`;
 
-  const _CA_MARKER='<div class="sec-hdr" style="margin-top:24px;"><span class="sec-title">Called Away</span>';
-  const _idx=html.indexOf(_CA_MARKER);
-  if(_idx>=0){
-    html=_donuts+html.slice(0,_idx)+_uncovHtml+html.slice(_idx);
-  } else {
-    html=_donuts+html+_uncovHtml;
-  }
-  container.innerHTML=html;
+  container.innerHTML=_donuts+html+_uncovHtml+_caHtml;
 }
 
 // ═══════════════════════════════════════
@@ -3513,7 +3560,12 @@ function renderLong(){
       <div class="stat-card"><div class="stat-label">Avg Price Paid</div><div class="stat-val">${totalShares?'$'+(totalCost/totalShares).toFixed(2):'—'}</div></div>
     </div>`:'';
 
-  const sortedLongs=longs.map((l,i)=>({l,i})).sort((a,b)=>{const da=a.l.date?new Date(a.l.date+'T12:00:00'):new Date(0);const db=b.l.date?new Date(b.l.date+'T12:00:00'):new Date(0);return db-da;});
+  // editable table rows — sorted by date desc
+  const sortedLongs=longs.map((l,i)=>({l,i})).sort((a,b)=>{
+    const da=a.l.date?new Date(a.l.date+'T12:00:00'):new Date(0);
+    const db=b.l.date?new Date(b.l.date+'T12:00:00'):new Date(0);
+    return db-da;
+  });
   const rows=sortedLongs.map(({l,i},rowNum)=>`
     <tr data-li="${i}">
       <td class="row-num">${rowNum+1}</td>
