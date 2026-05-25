@@ -2910,7 +2910,7 @@ function showWheelDetails(ticker, isUpdate, filterSet){
       var setTotal=setClosedPL+_setAppreciation;
       var plLabel=(setTotal>=0?'+':'')+fm(setTotal);
       var plCls=setTotal>=0?'tg':'tr';
-      out.push('<button class="wd-set-tab'+activeCls+'" onclick="showWheelDetails(''+ticker+'',true,'+s+')">'+openDot+'Set '+s+' <span class="set-pl '+plCls+'">'+plLabel+'</span></button>');
+      out.push('<button class="wd-set-tab'+activeCls+'" onclick="showWheelDetails(\''+ticker+'\',true,'+s+')">'+openDot+'Set '+s+' <span class="set-pl '+plCls+'">'+plLabel+'</span></button>');
     }
     return out.join('');
   })();
