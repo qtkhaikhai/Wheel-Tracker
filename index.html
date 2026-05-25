@@ -2711,7 +2711,7 @@ document.getElementById('modal-weekly').addEventListener('click',e=>{ if(e.targe
 function getUncoveredShares(){
   const holdings={};
   trades.filter(t=>t.type==='P'&&t.assigned==='Yes').forEach(t=>{
-    const key=(t.ticker||'?')+'|'+(parseInt(t.set)||1);
+    const key=(t.ticker||'?')+('|'+(parseInt(t.set)||1));
     if(!holdings[key]) holdings[key]={ticker:t.ticker,set:parseInt(t.set)||1,shares:0,totalCost:0};
     const k=parseInt(t.contracts)||1, sh=k*100;
     const netPrem=(parseFloat(t.premium)||0)*k*100-(parseFloat(t.openFees)||0)-(parseFloat(t.paidToClose)||0)-(parseFloat(t.closeFees)||0);
@@ -2720,14 +2720,14 @@ function getUncoveredShares(){
     holdings[key].totalCost+=cbPerShare*sh;
   });
   longs.filter(l=>l.ticker&&l.shares&&l.price).forEach(l=>{
-    const key=(l.ticker||'?')+'|'+(parseInt(l.set)||1);
+    const key=(l.ticker||'?')+('|'+(parseInt(l.set)||1));
     if(!holdings[key]) holdings[key]={ticker:l.ticker,set:parseInt(l.set)||1,shares:0,totalCost:0};
     const sh=parseFloat(l.shares)||0;
     holdings[key].shares+=sh;
     holdings[key].totalCost+=sh*(parseFloat(l.price)||0);
   });
   trades.filter(t=>t.type==='C'&&!cd(t)).forEach(t=>{
-    const key=(t.ticker||'?')+'|'+(parseInt(t.set)||1);
+    const key=(t.ticker||'?')+('|'+(parseInt(t.set)||1));
     if(!holdings[key]) return;
     holdings[key].shares-=(parseInt(t.contracts)||1)*100;
   });
@@ -2735,6 +2735,45 @@ function getUncoveredShares(){
     .filter(p=>p.shares>0.01)
     .map(p=>({ticker:p.ticker,set:p.set,shares:Math.round(p.shares),costBasis:p.totalCost/p.shares}))
     .sort((a,b)=>a.ticker.localeCompare(b.ticker)||(a.set-b.set));
+}
+
+function buildDonut(filterType,titleLabel,centerLabel){
+  const PALETTE=['#00e5a0','#5b8dee','#ffb830','#ff4d6d','#a78bfa','#34d399','#fb923c','#38bdf8','#f472b6','#a3e635'];
+  const donutR=70,donutCx=85,donutCy=85,donutStroke=22;
+  const openT=trades.filter(t=>!cd(t)&&t.ticker);
+  const byT={};
+  openT.filter(t=>t.type===filterType).forEach(t=>{
+    if(!byT[t.ticker]) byT[t.ticker]={ticker:t.ticker,capital:0};
+    byT[t.ticker].capital+=(parseFloat(t.strike)||0)*(parseInt(t.contracts)||1)*100;
+  });
+  const grps=Object.values(byT).sort((a,b)=>b.capital-a.capital);
+  const total=grps.reduce((s,g)=>s+g.capital,0);
+  if(!grps.length) return `<div class="pos-chart-card" style="flex:1;min-width:0;"><div class="pos-chart-title">${titleLabel}</div><div style="display:flex;align-items:center;justify-content:center;height:170px;color:var(--text3);font-size:12px;">No open ${filterType==='P'?'puts':'calls'}</div></div>`;
+  const circumference=2*Math.PI*donutR;
+  let offset=0;
+  const segs=grps.map((g,i)=>{
+    const pct=g.capital/total,dash=pct*circumference,gap=circumference-dash;
+    const seg=`<circle cx="${donutCx}" cy="${donutCy}" r="${donutR}" fill="none" stroke="${PALETTE[i%PALETTE.length]}" stroke-width="${donutStroke}" stroke-dasharray="${dash.toFixed(2)} ${gap.toFixed(2)}" stroke-dashoffset="${(-offset).toFixed(2)}" transform="rotate(-90 ${donutCx} ${donutCy})"/>`;
+    offset+=dash;
+    return {seg,color:PALETTE[i%PALETTE.length],pct};
+  });
+  const legendItems=grps.slice(0,8).map((g,i)=>`
+    <div class="donut-legend-item">
+      <div class="donut-legend-dot" style="background:${segs[i].color}"></div>
+      <span class="donut-legend-name wd-ticker-link" onclick="showWheelDetails('${g.ticker}')">${g.ticker}</span>
+      <span class="donut-legend-val">${fm(g.capital)} <span style="color:var(--text3);font-weight:400;">· ${Math.round(segs[i].pct*100)}%</span></span>
+    </div>`).join('');
+  return `<div class="pos-chart-card" style="flex:1;min-width:0;">
+    <div class="pos-chart-title">${titleLabel}</div>
+    <div class="donut-wrap">
+      <svg width="170" height="170" style="flex-shrink:0;">
+        ${segs.map(s=>s.seg).join('')}
+        <text x="${donutCx}" y="${donutCy-6}" text-anchor="middle" fill="#8888a0" font-size="10" font-family="DM Mono,monospace">${centerLabel}</text>
+        <text x="${donutCx}" y="${donutCy+12}" text-anchor="middle" fill="#e8e8f0" font-size="13" font-family="Syne,sans-serif" font-weight="700">${fm(total)}</text>
+      </svg>
+      <div class="donut-legend">${legendItems}</div>
+    </div>
+  </div>`;
 }
 
 function renderWheels(){
@@ -2781,47 +2820,38 @@ function renderWheels(){
     <div class="stat-card"><div class="stat-label">Nearest Expiry</div><div class="stat-val ${minDTE!=null&&minDTE<=7?'r':minDTE!=null&&minDTE<=21?'a':''}">${minDTE!=null?minDTE+'d':'—'}</div><div class="stat-sub">days to expiration</div></div>
   </div>`;
 
-  // ── donut charts (CSP + CC capital allocation, side by side)
+  // ── donut chart (capital allocation)
   const PALETTE=['#00e5a0','#5b8dee','#ffb830','#ff4d6d','#a78bfa','#34d399','#fb923c','#38bdf8','#f472b6','#a3e635'];
   const donutR=70, donutCx=85, donutCy=85, donutStroke=22;
-  const buildDonut=(filterType,titleLabel,centerLabel)=>{
-    const byT={};
-    open.filter(t=>t.type===filterType).forEach(t=>{
-      if(!byT[t.ticker]) byT[t.ticker]={ticker:t.ticker,capital:0};
-      byT[t.ticker].capital+=(parseFloat(t.strike)||0)*(parseInt(t.contracts)||1)*100;
-    });
-    const grps=Object.values(byT).sort((a,b)=>b.capital-a.capital);
-    const total=grps.reduce((s,g)=>s+g.capital,0);
-    if(!grps.length) return `<div class="pos-chart-card" style="flex:1;min-width:0;"><div class="pos-chart-title">${titleLabel}</div><div style="display:flex;align-items:center;justify-content:center;height:170px;color:var(--text3);font-size:12px;">No open ${filterType==='P'?'puts':'calls'}</div></div>`;
-    const circumference=2*Math.PI*donutR;
-    let offset=0;
-    const segs=grps.map((g,i)=>{
-      const pct=g.capital/total;
-      const dash=pct*circumference;
-      const gap=circumference-dash;
-      const seg=`<circle cx="${donutCx}" cy="${donutCy}" r="${donutR}" fill="none" stroke="${PALETTE[i%PALETTE.length]}" stroke-width="${donutStroke}" stroke-dasharray="${dash.toFixed(2)} ${gap.toFixed(2)}" stroke-dashoffset="${(-offset).toFixed(2)}" transform="rotate(-90 ${donutCx} ${donutCy})"/>`;
-      offset+=dash;
-      return {seg,color:PALETTE[i%PALETTE.length],pct};
-    });
-    const legendItems=grps.slice(0,8).map((g,i)=>`
-      <div class="donut-legend-item">
-        <div class="donut-legend-dot" style="background:${segs[i].color}"></div>
-        <span class="donut-legend-name wd-ticker-link" onclick="showWheelDetails('${g.ticker}')">${g.ticker}</span>
-        <span class="donut-legend-val">${fm(g.capital)} <span style="color:var(--text3);font-weight:400;">· ${Math.round(segs[i].pct*100)}%</span></span>
-      </div>`).join('');
-    return `<div class="pos-chart-card" style="flex:1;min-width:0;">
-      <div class="pos-chart-title">${titleLabel}</div>
-      <div class="donut-wrap">
-        <svg width="170" height="170" style="flex-shrink:0;">
-          ${segs.map(s=>s.seg).join('')}
-          <text x="${donutCx}" y="${donutCy-6}" text-anchor="middle" fill="#8888a0" font-size="10" font-family="DM Mono,monospace">${centerLabel}</text>
-          <text x="${donutCx}" y="${donutCy+12}" text-anchor="middle" fill="#e8e8f0" font-size="13" font-family="Syne,sans-serif" font-weight="700">${fm(total)}</text>
-        </svg>
-        <div class="donut-legend">${legendItems}</div>
-      </div>
-    </div>`;
-  };
-  const donutChart=`<div style="display:flex;gap:16px;flex-wrap:wrap;">${buildDonut('P','CSP Allocation','COLLATERAL')}${buildDonut('C','CC Allocation','NOTIONAL')}</div>`;
+  const circumference=2*Math.PI*donutR;
+  let offset=0;
+  const donutSegs=groups.map((g,i)=>{
+    const pct=g.capital/totalCapital;
+    const dash=pct*circumference;
+    const gap=circumference-dash;
+    const seg=`<circle cx="${donutCx}" cy="${donutCy}" r="${donutR}" fill="none" stroke="${PALETTE[i%PALETTE.length]}" stroke-width="${donutStroke}" stroke-dasharray="${dash.toFixed(2)} ${gap.toFixed(2)}" stroke-dashoffset="${(-offset).toFixed(2)}" transform="rotate(-90 ${donutCx} ${donutCy})"/>`;
+    offset+=dash;
+    return {seg,color:PALETTE[i%PALETTE.length],pct};
+  });
+
+  const legendItems=groups.slice(0,8).map((g,i)=>`
+    <div class="donut-legend-item">
+      <div class="donut-legend-dot" style="background:${PALETTE[i%PALETTE.length]}"></div>
+      <span class="donut-legend-name wd-ticker-link" onclick="showWheelDetails('${g.ticker}')">${g.ticker}</span>
+      <span class="donut-legend-val">${fm(g.capital)} <span style="color:var(--text3);font-weight:400;">· ${Math.round(donutSegs[i].pct*100)}%</span></span>
+    </div>`).join('');
+
+  const donutChart=`<div class="pos-chart-card">
+    <div class="pos-chart-title">Capital Allocation</div>
+    <div class="donut-wrap">
+      <svg width="170" height="170" style="flex-shrink:0;">
+        ${donutSegs.map(s=>s.seg).join('')}
+        <text x="${donutCx}" y="${donutCy-6}" text-anchor="middle" fill="#8888a0" font-size="10" font-family="DM Mono,monospace">AT RISK</text>
+        <text x="${donutCx}" y="${donutCy+12}" text-anchor="middle" fill="#e8e8f0" font-size="13" font-family="Syne,sans-serif" font-weight="700">${fm(totalCapital)}</text>
+      </svg>
+      <div class="donut-legend">${legendItems}</div>
+    </div>
+  </div>`;
 
   // ── position cards
   const cards=groups.map((g,gi)=>{
@@ -3349,6 +3379,9 @@ function renderShares(){
 
   let html='';
 
+  // ── Capital allocation donuts
+  html+='<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:20px;">'+buildDonut('P','CSP Allocation','COLLATERAL')+buildDonut('C','CC Allocation','NOTIONAL')+'</div>';
+
   // ── Section: Shares Held (wheel + integrated longs)
   if(held.length||standaloneLongs.length){
     // Grand totals include all lot types
@@ -3434,7 +3467,7 @@ function renderShares(){
         '<span class="sec-title">Shares Held</span>'+
         '<span class="td" style="font-size:11px;">'+grandTotalShares.toLocaleString()+' shares · '+fm(grandAdjCost)+' adj. cost basis</span>'+
       '</div>'+
-      '<div class="tbl-wrap"><table>'+
+      '<div class="tbl-wrap" style="max-height:220px;overflow-y:auto;"><table>'+
         '<thead><tr>'+
           '<th>Ticker</th><th>Lots / Set</th><th>Shares</th><th>Avg Cost Basis</th>'+
           '<th>Premium Received</th><th>Adj. Cost Basis</th><th>Date</th><th>Notes</th>'+
@@ -3465,7 +3498,7 @@ function renderShares(){
         '<span class="sec-title">Called Away</span>'+
         '<span class="td" style="font-size:11px;">Shares sold via covered call assignment</span>'+
       '</div>'+
-      '<div class="tbl-wrap"><table>'+
+      '<div class="tbl-wrap" style="max-height:220px;overflow-y:auto;"><table>'+
         '<thead><tr>'+
           '<th>Ticker</th><th>Shares</th><th>Put Strike</th><th>Cost Basis</th>'+
           '<th>Call Strike</th><th>Call Premium</th><th>Total Gain</th><th>Called Date</th>'+
