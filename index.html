@@ -2876,49 +2876,7 @@ function showWheelDetails(ticker, isUpdate, filterSet){
   if(!ts.length&&!longsForFilter.length){ closeWheelDetails(); return; }
 
   // Build set tab bar
-  const _setTabButtons=(function(){
-    var _curPrice=sharePrices[ticker]!=null?parseFloat(sharePrices[ticker]):null;
-    var out=[];
-    for(var _i=0;_i<availSets.length;_i++){
-      var s=availSets[_i];
-      var setTrades=allTs.filter(function(t){return (parseInt(t.set)||1)===s;});
-      var setClosedPL=setTrades.filter(function(t){return cd(t);}).reduce(function(sum,t){return sum+(calcPL(t)||0);},0);
-      var isOpen=setTrades.some(function(t){return !cd(t);});
-      var openDot=isOpen?'&#9679; ':'';
-      var activeCls=activeSetFilter===s?' active':'';
-      // Per-set share appreciation
-      var _setLots=[];
-      setTrades.filter(function(t){return t.type==='P'&&t.assigned==='Yes';}).forEach(function(t){
-        _setLots.push({shares:(parseInt(t.contracts)||1)*100,strike:parseFloat(t.strike)||0,date:cd(t)||t.expDate||''});
-      });
-      _setLots.sort(function(a,b){return new Date(a.date||0)-new Date(b.date||0);});
-      setTrades.filter(function(t){return t.type==='C'&&t.assigned==='Yes';}).forEach(function(t){
-        var toRemove=(parseInt(t.contracts)||1)*100;
-        for(var _j=0;_j<_setLots.length&&toRemove>0;_j++){
-          if(_setLots[_j].shares<=toRemove){toRemove-=_setLots[_j].shares;_setLots[_j].shares=0;}
-          else{_setLots[_j].shares-=toRemove;toRemove=0;}
-        }
-        _setLots=_setLots.filter(function(l){return l.shares>0;});
-      });
-      longs.filter(function(l){return l.ticker===ticker&&l.shares&&l.price&&(parseInt(l.set)||1)===s;}).forEach(function(l){
-        _setLots.push({shares:parseFloat(l.shares)||0,strike:parseFloat(l.price)||0,date:l.date||''});
-      });
-      var _setShares=_setLots.reduce(function(sm,l){return sm+l.shares;},0);
-      var _setInvested=_setLots.reduce(function(sm,l){return sm+l.shares*l.strike;},0);
-      var _setCostBasis=_setShares>0?_setInvested/_setShares:0;
-      var _setAppreciation=(_curPrice!=null&&_setShares>0)?(_curPrice-_setCostBasis)*_setShares:0;
-      if(s===6) console.log('[SET6 DEBUG] ticker='+ticker+' _curPrice='+_curPrice+' _setShares='+_setShares+' _setCostBasis='+_setCostBasis+' _setAppreciation='+_setAppreciation+' setClosedPL='+setClosedPL);
-      var setTotal=setClosedPL+_setAppreciation;
-      var plLabel=(setTotal>=0?'+':'')+fm(setTotal);
-      var plCls=setTotal>=0?'tg':'tr';
-      out.push('<button class="wd-set-tab'+activeCls+'" onclick="showWheelDetails(\''+ticker+'\',true,'+s+')">'+openDot+'Set '+s+' <span class="set-pl '+plCls+'">'+plLabel+'</span></button>');
-    }
-    return out.join('');
-  })();
-  var _allActiveCls=activeSetFilter===null?' active':'';
-  var setTabHtml=hasMultipleSets
-    ? '<div class="wd-set-tabs"><button class="wd-set-tab'+_allActiveCls+'" onclick="showWheelDetails(\''+ticker+'\',true,null)">All Sets</button>'+_setTabButtons+'</div>'
-    : '';
+
 
   const realizedPutP=ts.filter(t=>t.type==='P'&&cd(t)).reduce((s,t)=>s+(calcPL(t)||0),0);
   const realizedCallP=ts.filter(t=>t.type==='C'&&cd(t)).reduce((s,t)=>s+(calcPL(t)||0),0);
@@ -2960,6 +2918,48 @@ function showWheelDetails(ticker, isUpdate, filterSet){
   const unassignedShares=Math.max(0,sharesOwned-sharesUnderCall);
 
   const currentPrice=sharePrices[ticker]!=null?parseFloat(sharePrices[ticker]):null;
+
+  const _setTabButtons=(function(){
+    var out=[];
+    for(var _i=0;_i<availSets.length;_i++){
+      var s=availSets[_i];
+      var setTrades=allTs.filter(function(t){return (parseInt(t.set)||1)===s;});
+      var setClosedPL=setTrades.filter(function(t){return cd(t);}).reduce(function(sum,t){return sum+(calcPL(t)||0);},0);
+      var isOpen=setTrades.some(function(t){return !cd(t);});
+      var openDot=isOpen?'&#9679; ':'';
+      var activeCls=activeSetFilter===s?' active':'';
+      // Per-set share appreciation
+      var _setLots=[];
+      setTrades.filter(function(t){return t.type==='P'&&t.assigned==='Yes';}).forEach(function(t){
+        _setLots.push({shares:(parseInt(t.contracts)||1)*100,strike:parseFloat(t.strike)||0,date:cd(t)||t.expDate||''});
+      });
+      _setLots.sort(function(a,b){return new Date(a.date||0)-new Date(b.date||0);});
+      setTrades.filter(function(t){return t.type==='C'&&t.assigned==='Yes';}).forEach(function(t){
+        var toRemove=(parseInt(t.contracts)||1)*100;
+        for(var _j=0;_j<_setLots.length&&toRemove>0;_j++){
+          if(_setLots[_j].shares<=toRemove){toRemove-=_setLots[_j].shares;_setLots[_j].shares=0;}
+          else{_setLots[_j].shares-=toRemove;toRemove=0;}
+        }
+        _setLots=_setLots.filter(function(l){return l.shares>0;});
+      });
+      longs.filter(function(l){return l.ticker===ticker&&l.shares&&l.price&&(parseInt(l.set)||1)===s;}).forEach(function(l){
+        _setLots.push({shares:parseFloat(l.shares)||0,strike:parseFloat(l.price)||0,date:l.date||''});
+      });
+      var _setShares=_setLots.reduce(function(sm,l){return sm+l.shares;},0);
+      var _setInvested=_setLots.reduce(function(sm,l){return sm+l.shares*l.strike;},0);
+      var _setCostBasis=_setShares>0?_setInvested/_setShares:0;
+      var _setAppreciation=(currentPrice!=null&&_setShares>0)?(currentPrice-_setCostBasis)*_setShares:0;
+      var setTotal=setClosedPL+_setAppreciation;
+      var plLabel=(setTotal>=0?'+':'')+fm(setTotal);
+      var plCls=setTotal>=0?'tg':'tr';
+      out.push('<button class="wd-set-tab'+activeCls+'" onclick="showWheelDetails(\''+ticker+'\',true,'+s+')">'+openDot+'Set '+s+' <span class="set-pl '+plCls+'">'+plLabel+'</span></button>');
+    }
+    return out.join('');
+  })();
+  var _allActiveCls=activeSetFilter===null?' active':'';
+  var setTabHtml=hasMultipleSets
+    ? '<div class="wd-set-tabs"><button class="wd-set-tab'+_allActiveCls+'" onclick="showWheelDetails(\''+ticker+'\',true,null)">All Sets</button>'+_setTabButtons+'</div>'
+    : '';
   const breakEven=sharesOwned>0?costBasis-(totalPremium/sharesOwned):null;
 
   let mtmShares=null, totalPL=null;
