@@ -1446,6 +1446,40 @@ function getStockBreakdown(){
   return Object.values(map).filter(m=>m.closedCount>0||m.opens>0).sort((a,b)=>b.realized-a.realized);
 }
 
+
+function getUncoveredShares(){
+  const holdings={};
+  // 1. Assigned puts → shares acquired
+  trades.filter(t=>t.type==='P'&&t.assigned==='Yes').forEach(t=>{
+    const key=(t.ticker||'?')+'|'+(parseInt(t.set)||1);
+    if(!holdings[key]) holdings[key]={ticker:t.ticker,set:parseInt(t.set)||1,shares:0,totalCost:0};
+    const k=parseInt(t.contracts)||1;
+    const sh=k*100;
+    const netPrem=(parseFloat(t.premium)||0)*k*100-(parseFloat(t.openFees)||0)-(parseFloat(t.paidToClose)||0)-(parseFloat(t.closeFees)||0);
+    const cbPerShare=(parseFloat(t.strike)||0)-netPrem/sh;
+    holdings[key].shares+=sh;
+    holdings[key].totalCost+=cbPerShare*sh;
+  });
+  // 2. Manual longs
+  longs.filter(l=>l.ticker&&l.shares&&l.price).forEach(l=>{
+    const key=(l.ticker||'?')+'|'+(parseInt(l.set)||1);
+    if(!holdings[key]) holdings[key]={ticker:l.ticker,set:parseInt(l.set)||1,shares:0,totalCost:0};
+    const sh=parseFloat(l.shares)||0;
+    holdings[key].shares+=sh;
+    holdings[key].totalCost+=sh*(parseFloat(l.price)||0);
+  });
+  // 3. Subtract open covered calls
+  trades.filter(t=>t.type==='C'&&!cd(t)).forEach(t=>{
+    const key=(t.ticker||'?')+'|'+(parseInt(t.set)||1);
+    if(!holdings[key]) return;
+    holdings[key].shares-=(parseInt(t.contracts)||1)*100;
+  });
+  return Object.values(holdings)
+    .filter(p=>p.shares>0.01)
+    .map(p=>({ticker:p.ticker,set:p.set,shares:Math.round(p.shares),costBasis:p.totalCost/p.shares}))
+    .sort((a,b)=>a.ticker.localeCompare(b.ticker)||(a.set-b.set));
+}
+
 function renderSummary(){
   const container=document.getElementById('summary-content');
   if(!container) return;
@@ -1955,7 +1989,25 @@ function _renderSummaryInner(container){
       <div class="tbl-wrap" style="margin:0;border:none;border-radius:0;background:transparent;"><div class="mlist" id="summary-monthly"></div></div>
     </div>`;
 
-  container.innerHTML=hero+kpis+`<div class="sum-two-col">${expansion}${calendar}</div>`+monthlyPanel+feed;
+
+  // ──────── UNCOVERED SHARES
+  const uncoveredList=getUncoveredShares();
+  const uncovRows=uncoveredList.map(p=>`
+    <div style="display:grid;grid-template-columns:1fr auto auto auto;align-items:center;padding:9px 18px;border-bottom:1px solid var(--border);gap:12px;font-size:12px;">
+      <span style="font-family:var(--sans);font-weight:700;font-size:13px;">${p.ticker}</span>
+      <span style="font-size:10px;color:var(--text3);background:var(--surface2);padding:2px 6px;border-radius:3px;font-family:var(--mono);">Set ${p.set}</span>
+      <span style="font-family:var(--sans);font-weight:600;color:var(--amber);">${p.shares.toLocaleString()} sh</span>
+      <span style="font-family:var(--mono);color:var(--text2);">$${p.costBasis.toFixed(2)}/sh</span>
+    </div>`).join('');
+  const uncoveredPanel=`
+    <div class="sum-panel">
+      <div class="sum-panel-hdr">
+        <span class="sum-panel-title">Uncovered Shares</span>
+        <span style="font-size:10px;color:var(--text3);">${uncoveredList.length} position${uncoveredList.length!==1?'s':''} · no CC written</span>
+      </div>
+      ${uncovRows||'<div style="padding:24px;text-align:center;color:var(--text3);font-size:12px;">All shares covered ✓</div>'}
+    </div>`;
+  container.innerHTML=hero+kpis+`<div class="sum-two-col"><div style="display:flex;flex-direction:column;gap:16px;">${expansion}${uncoveredPanel}</div>${calendar}</div>`+monthlyPanel+feed;
   // populate the monthly P&L list using the existing renderer
   try { renderMonthly('summary-monthly'); } catch(e){ console.error('summary monthly:',e); }
 }
@@ -3456,7 +3508,6 @@ function renderLong(){
       <div class="stat-card"><div class="stat-label">Avg Price Paid</div><div class="stat-val">${totalShares?'$'+(totalCost/totalShares).toFixed(2):'—'}</div></div>
     </div>`:'';
 
-  // editable table rows — auto-sorted newest first
   const sortedLongs=longs.map((l,i)=>({l,i})).sort((a,b)=>{const da=a.l.date?new Date(a.l.date+'T12:00:00'):new Date(0);const db=b.l.date?new Date(b.l.date+'T12:00:00'):new Date(0);return db-da;});
   const rows=sortedLongs.map(({l,i},rowNum)=>`
     <tr data-li="${i}">
