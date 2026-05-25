@@ -581,7 +581,6 @@ tbody td{padding:10px 13px;white-space:nowrap;}
       <button class="fbtn" onclick="flt('call',this)">Calls</button>
       <button class="fbtn" onclick="flt('assigned',this)">Assigned</button>
       <input class="fsearch" type="text" placeholder="Search ticker…" oninput="logSearch=this.value.toUpperCase();renderLog()"/>
-      <button class="fbtn" onclick="clearAll()" style="margin-left:auto;border-color:var(--red-dim);color:var(--red);" onmouseover="this.style.borderColor='var(--red)'" onmouseout="this.style.borderColor='var(--red-dim)'">⌫ Clear All</button>
     </div>
     <div class="fbar fbar-date">
       <span style="font-size:10px;color:var(--text3);letter-spacing:.06em;text-transform:uppercase;">Date range:</span>
@@ -598,6 +597,9 @@ tbody td{padding:10px 13px;white-space:nowrap;}
     </div>
     <div style="margin-bottom:12px;"><button class="btn-primary" onclick="addRow()">+ Add Row</button></div>
     <div class="log-outer" id="log-outer"></div>
+    <div style="display:flex;justify-content:flex-end;margin-top:8px;">
+      <button onclick="clearAll()" style="background:none;border:1px solid var(--red-dim);color:var(--red);font-family:var(--mono);font-size:10px;padding:5px 12px;border-radius:6px;cursor:pointer;letter-spacing:.05em;" onmouseover="this.style.borderColor='var(--red)'" onmouseout="this.style.borderColor='var(--red-dim)'">⌫ Clear All</button>
+    </div>
   </div>
 
   <!-- WHEELS (open option positions) -->
@@ -1446,40 +1448,6 @@ function getStockBreakdown(){
   return Object.values(map).filter(m=>m.closedCount>0||m.opens>0).sort((a,b)=>b.realized-a.realized);
 }
 
-
-function getUncoveredShares(){
-  const holdings={};
-  // 1. Assigned puts → shares acquired
-  trades.filter(t=>t.type==='P'&&t.assigned==='Yes').forEach(t=>{
-    const key=(t.ticker||'?')+'|'+(parseInt(t.set)||1);
-    if(!holdings[key]) holdings[key]={ticker:t.ticker,set:parseInt(t.set)||1,shares:0,totalCost:0};
-    const k=parseInt(t.contracts)||1;
-    const sh=k*100;
-    const netPrem=(parseFloat(t.premium)||0)*k*100-(parseFloat(t.openFees)||0)-(parseFloat(t.paidToClose)||0)-(parseFloat(t.closeFees)||0);
-    const cbPerShare=(parseFloat(t.strike)||0)-netPrem/sh;
-    holdings[key].shares+=sh;
-    holdings[key].totalCost+=cbPerShare*sh;
-  });
-  // 2. Manual longs
-  longs.filter(l=>l.ticker&&l.shares&&l.price).forEach(l=>{
-    const key=(l.ticker||'?')+'|'+(parseInt(l.set)||1);
-    if(!holdings[key]) holdings[key]={ticker:l.ticker,set:parseInt(l.set)||1,shares:0,totalCost:0};
-    const sh=parseFloat(l.shares)||0;
-    holdings[key].shares+=sh;
-    holdings[key].totalCost+=sh*(parseFloat(l.price)||0);
-  });
-  // 3. Subtract open covered calls
-  trades.filter(t=>t.type==='C'&&!cd(t)).forEach(t=>{
-    const key=(t.ticker||'?')+'|'+(parseInt(t.set)||1);
-    if(!holdings[key]) return;
-    holdings[key].shares-=(parseInt(t.contracts)||1)*100;
-  });
-  return Object.values(holdings)
-    .filter(p=>p.shares>0.01)
-    .map(p=>({ticker:p.ticker,set:p.set,shares:Math.round(p.shares),costBasis:p.totalCost/p.shares}))
-    .sort((a,b)=>a.ticker.localeCompare(b.ticker)||(a.set-b.set));
-}
-
 function renderSummary(){
   const container=document.getElementById('summary-content');
   if(!container) return;
@@ -1989,25 +1957,7 @@ function _renderSummaryInner(container){
       <div class="tbl-wrap" style="margin:0;border:none;border-radius:0;background:transparent;"><div class="mlist" id="summary-monthly"></div></div>
     </div>`;
 
-
-  // ──────── UNCOVERED SHARES
-  const uncoveredList=getUncoveredShares();
-  const uncovRows=uncoveredList.map(p=>`
-    <div style="display:grid;grid-template-columns:1fr auto auto auto;align-items:center;padding:9px 18px;border-bottom:1px solid var(--border);gap:12px;font-size:12px;">
-      <span style="font-family:var(--sans);font-weight:700;font-size:13px;">${p.ticker}</span>
-      <span style="font-size:10px;color:var(--text3);background:var(--surface2);padding:2px 6px;border-radius:3px;font-family:var(--mono);">Set ${p.set}</span>
-      <span style="font-family:var(--sans);font-weight:600;color:var(--amber);">${p.shares.toLocaleString()} sh</span>
-      <span style="font-family:var(--mono);color:var(--text2);">$${p.costBasis.toFixed(2)}/sh</span>
-    </div>`).join('');
-  const uncoveredPanel=`
-    <div class="sum-panel">
-      <div class="sum-panel-hdr">
-        <span class="sum-panel-title">Uncovered Shares</span>
-        <span style="font-size:10px;color:var(--text3);">${uncoveredList.length} position${uncoveredList.length!==1?'s':''} · no CC written</span>
-      </div>
-      ${uncovRows||'<div style="padding:24px;text-align:center;color:var(--text3);font-size:12px;">All shares covered ✓</div>'}
-    </div>`;
-  container.innerHTML=hero+kpis+`<div class="sum-two-col"><div style="display:flex;flex-direction:column;gap:16px;">${expansion}${uncoveredPanel}</div>${calendar}</div>`+monthlyPanel+feed;
+  container.innerHTML=hero+kpis+`<div class="sum-two-col">${expansion}${calendar}</div>`+monthlyPanel+feed;
   // populate the monthly P&L list using the existing renderer
   try { renderMonthly('summary-monthly'); } catch(e){ console.error('summary monthly:',e); }
 }
@@ -2758,6 +2708,35 @@ document.getElementById('modal-weekly').addEventListener('click',e=>{ if(e.targe
 // ═══════════════════════════════════════
 //  POSITIONS
 // ═══════════════════════════════════════
+function getUncoveredShares(){
+  const holdings={};
+  trades.filter(t=>t.type==='P'&&t.assigned==='Yes').forEach(t=>{
+    const key=(t.ticker||'?')+'|'+(parseInt(t.set)||1);
+    if(!holdings[key]) holdings[key]={ticker:t.ticker,set:parseInt(t.set)||1,shares:0,totalCost:0};
+    const k=parseInt(t.contracts)||1, sh=k*100;
+    const netPrem=(parseFloat(t.premium)||0)*k*100-(parseFloat(t.openFees)||0)-(parseFloat(t.paidToClose)||0)-(parseFloat(t.closeFees)||0);
+    const cbPerShare=(parseFloat(t.strike)||0)-netPrem/sh;
+    holdings[key].shares+=sh;
+    holdings[key].totalCost+=cbPerShare*sh;
+  });
+  longs.filter(l=>l.ticker&&l.shares&&l.price).forEach(l=>{
+    const key=(l.ticker||'?')+'|'+(parseInt(l.set)||1);
+    if(!holdings[key]) holdings[key]={ticker:l.ticker,set:parseInt(l.set)||1,shares:0,totalCost:0};
+    const sh=parseFloat(l.shares)||0;
+    holdings[key].shares+=sh;
+    holdings[key].totalCost+=sh*(parseFloat(l.price)||0);
+  });
+  trades.filter(t=>t.type==='C'&&!cd(t)).forEach(t=>{
+    const key=(t.ticker||'?')+'|'+(parseInt(t.set)||1);
+    if(!holdings[key]) return;
+    holdings[key].shares-=(parseInt(t.contracts)||1)*100;
+  });
+  return Object.values(holdings)
+    .filter(p=>p.shares>0.01)
+    .map(p=>({ticker:p.ticker,set:p.set,shares:Math.round(p.shares),costBasis:p.totalCost/p.shares}))
+    .sort((a,b)=>a.ticker.localeCompare(b.ticker)||(a.set-b.set));
+}
+
 function renderWheels(){
   const container=document.getElementById('pos-content');
   const open=trades.filter(t=>!cd(t)&&t.ticker);
@@ -3483,6 +3462,31 @@ function renderShares(){
           '<th>Call Strike</th><th>Call Premium</th><th>Total Gain</th><th>Called Date</th>'+
         '</tr></thead>'+
         '<tbody>'+caRows+'</tbody>'+
+      '</table></div>';
+  }
+
+
+  // ── Section: Uncovered Shares
+  const uncovList=getUncoveredShares();
+  if(uncovList.length){
+    const uncovRows=uncovList.map(p=>
+      '<tr>'+
+        '<td><span class="ticker">'+p.ticker+'</span></td>'+
+        '<td>Set '+p.set+'</td>'+
+        '<td style="font-weight:600;color:var(--amber);">'+p.shares.toLocaleString()+'</td>'+
+        '<td>$'+p.costBasis.toFixed(2)+'</td>'+
+      '</tr>'
+    ).join('');
+    html+=
+      '<div class="sec-hdr" style="margin-top:24px;">'+
+        '<span class="sec-title">Uncovered Shares</span>'+
+        '<span class="td" style="font-size:11px;">'+uncovList.length+' position'+(uncovList.length!==1?'s':'')+' · no covered call written</span>'+
+      '</div>'+
+      '<div class="tbl-wrap"><table>'+
+        '<thead><tr>'+
+          '<th>Ticker</th><th>Set</th><th>Uncovered Shares</th><th>Cost Basis / sh</th>'+
+        '</tr></thead>'+
+        '<tbody>'+uncovRows+'</tbody>'+
       '</table></div>';
   }
 
