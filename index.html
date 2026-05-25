@@ -3391,7 +3391,7 @@ function renderShares(){
         '<span class="sec-title">Shares Held</span>'+
         '<span class="td" style="font-size:11px;">'+grandTotalShares.toLocaleString()+' shares · '+fm(grandAdjCost)+' adj. cost basis</span>'+
       '</div>'+
-      '<div class="tbl-wrap" style="max-height:220px;overflow-y:auto;"><table>'+
+      '<div class="tbl-wrap" style="max-height:440px;overflow-y:auto;"><table>'+
         '<thead><tr>'+
           '<th>Ticker</th><th>Lots / Set</th><th>Shares</th><th>Avg Cost Basis</th>'+
           '<th>Premium Received</th><th>Adj. Cost Basis</th><th>Date</th><th>Notes</th>'+
@@ -3431,7 +3431,7 @@ function renderShares(){
       '</table></div>';
   }
 
-  // ── Build uncovered shares block ──
+  // ── Uncovered shares ──
   const _uncov=(()=>{
     const h={};
     trades.filter(t=>t.type==='P'&&t.assigned==='Yes').forEach(t=>{
@@ -3461,7 +3461,7 @@ function renderShares(){
       +'<tbody>'+_uncov.map(p=>'<tr><td><span class="ticker">'+p.ticker+'</span></td><td>Set '+p.set+'</td><td style="font-weight:600;color:var(--amber);">'+p.shares.toLocaleString()+'</td><td>$'+p.costBasis.toFixed(2)+'</td></tr>').join('')+'</tbody></table></div>'
     : '';
 
-  // ── Inject donuts at top, splice uncovered before Called Away ──
+  // ── Donuts for positions tab ──
   const _PALETTE=['#00e5a0','#5b8dee','#ffb830','#ff4d6d','#a78bfa','#34d399','#fb923c','#38bdf8','#f472b6','#a3e635'];
   const _donutR=70,_donutCx=85,_donutCy=85,_donutStroke=22,_donutCirc=2*Math.PI*_donutR;
   const _mkD=(ftype,tlabel,clabel)=>{
