@@ -3104,6 +3104,12 @@ function showWheelDetails(ticker, isUpdate, filterSet){
     const cb=strike-(prem-fees)/shares;
     wdInv.lots.push({shares,strike,costBasis:cb,premiumPut:prem,openFees:fees,id:t.id});
   });
+  // Seed Long positions for this set so covered call assignment captures their share appreciation
+  longsForFilter.forEach(l=>{
+    const sh=parseFloat(l.shares)||0;
+    const price=parseFloat(l.price)||0;
+    if(sh>0&&price>0) wdInv.lots.push({shares:sh,strike:price,costBasis:price,premiumPut:0,openFees:0,id:'long-'+(l.date||''),lotType:'long'});
+  });
   ts.filter(t=>t.type==='C'&&t.assigned==='Yes').forEach(t=>{
     const callStrike=parseFloat(t.strike)||0;
     const premiumCall=(parseFloat(t.premium)||0)*(parseInt(t.contracts)||1)*100;
