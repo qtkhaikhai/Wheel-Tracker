@@ -1496,7 +1496,7 @@ function _renderSummaryInner(container){
     }
   });
   const assignedCost=Object.values(inv).reduce((s,o)=>s+o.cost,0);
-  const longCost=longs.reduce((s,l)=>s+(parseFloat(l.shares)||0)*(parseFloat(l.price)||0),0);
+  const longCost=longs.filter(l=>!l.calledAway).reduce((s,l)=>s+(parseFloat(l.shares)||0)*(parseFloat(l.price)||0),0);
   const committed=cspCollat+assignedCost+longCost;
   // cashOnHand matches Dashboard: (capital + realized) - committed
   const cashOnHand=(cap+closedAll.reduce((s,t)=>s+(calcPL(t)||0),0))-committed;
@@ -2502,7 +2502,7 @@ function renderDashboard(){
   const assignedCostBasis=Object.values(inventory).reduce((sum,g)=>sum+g.lots.reduce((s,l)=>s+l.shares*l.costBasis,0),0);
 
   // Also include long positions cost
-  const longCost=longs.filter(l=>l.ticker&&l.shares&&l.price).reduce((s,l)=>(parseFloat(l.shares)||0)*(parseFloat(l.price)||0)+s,0);
+  const longCost=longs.filter(l=>l.ticker&&l.shares&&l.price&&!l.calledAway).reduce((s,l)=>(parseFloat(l.shares)||0)*(parseFloat(l.price)||0)+s,0);
 
   const cashCommitted=cashSecuredPuts+assignedCostBasis+longCost;
   const cashOnHand=total-cashCommitted;
@@ -2905,7 +2905,7 @@ function showWheelDetails(ticker, isUpdate, filterSet){
   });
 
   // Merge long positions for this ticker (scoped to set filter if active)
-  longs.filter(l=>l.ticker===ticker&&l.shares&&l.price&&(activeSetFilter===null||(parseInt(l.set)||1)===activeSetFilter)).forEach(l=>{
+  longs.filter(l=>l.ticker===ticker&&l.shares&&l.price&&!l.calledAway&&(activeSetFilter===null||(parseInt(l.set)||1)===activeSetFilter)).forEach(l=>{
     lots.push({shares:parseFloat(l.shares)||0, strike:parseFloat(l.price)||0, set:parseInt(l.set)||1, date:l.date||'', lotType:'long', notes:l.notes||''});
   });
 
@@ -2957,7 +2957,7 @@ function showWheelDetails(ticker, isUpdate, filterSet){
         }
         _setLots=_setLots.filter(function(l){return l.shares>0;});
       });
-      longs.filter(function(l){return l.ticker===ticker&&l.shares&&l.price&&(parseInt(l.set)||1)===s;}).forEach(function(l){
+      longs.filter(function(l){return l.ticker===ticker&&l.shares&&l.price&&!l.calledAway&&(parseInt(l.set)||1)===s;}).forEach(function(l){
         _setLots.push({shares:parseFloat(l.shares)||0,strike:parseFloat(l.price)||0,costBasis:parseFloat(l.price)||0,date:l.date||''});
       });
       var _setShares=_setLots.reduce(function(sm,l){return sm+l.shares;},0);
@@ -3330,7 +3330,7 @@ function renderShares(){
   });
 
   // ── Pass 3: merge long positions into matching ticker+set, or create standalone entry
-  const validLongs=longs.filter(l=>l.ticker&&l.shares&&l.price);
+  const validLongs=longs.filter(l=>l.ticker&&l.shares&&l.price&&!l.calledAway);
   const standaloneLongs=[]; // longs for tickers with no wheel inventory
   validLongs.forEach(l=>{
     const k=l.ticker;
@@ -3472,7 +3472,7 @@ function renderShares(){
       }
       _byT[t.ticker].lots=ls.filter(l=>l.shares>0);
     });
-    longs.filter(l=>l.ticker&&l.shares&&l.price).forEach(l=>{
+    longs.filter(l=>l.ticker&&l.shares&&l.price&&!l.calledAway).forEach(l=>{
       const k=l.ticker;
       if(!_byT[k]) _byT[k]={ticker:k,lots:[]};
       _byT[k].lots.push({shares:parseFloat(l.shares)||0,date:l.date||'',isLong:true});
@@ -3570,13 +3570,15 @@ function renderLong(){
   const container=document.getElementById('long-content');
   if(!container) return;
 
-  const totalCost=longs.reduce((s,l)=>s+(parseFloat(l.shares)||0)*(parseFloat(l.price)||0),0);
-  const totalShares=longs.reduce((s,l)=>s+(parseFloat(l.shares)||0),0);
+  const activeLongs=longs.filter(l=>!l.calledAway);
+  const totalCost=activeLongs.reduce((s,l)=>s+(parseFloat(l.shares)||0)*(parseFloat(l.price)||0),0);
+  const totalShares=activeLongs.reduce((s,l)=>s+(parseFloat(l.shares)||0),0);
+  const calledAwayCount=longs.filter(l=>l.calledAway).length;
 
   // summary stats
   const stats=longs.length?`
     <div class="stat-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:20px;">
-      <div class="stat-card"><div class="stat-label">Positions</div><div class="stat-val">${longs.length}</div></div>
+      <div class="stat-card"><div class="stat-label">Active Positions</div><div class="stat-val">${activeLongs.length}${calledAwayCount?' <span style="font-size:12px;color:var(--text3);">+'+calledAwayCount+' closed</span>':''}</div></div>
       <div class="stat-card"><div class="stat-label">Total Shares</div><div class="stat-val">${totalShares.toLocaleString()}</div></div>
       <div class="stat-card"><div class="stat-label">Total Cost Basis</div><div class="stat-val r">${fm(totalCost)}</div></div>
       <div class="stat-card"><div class="stat-label">Avg Price Paid</div><div class="stat-val">${totalShares?'$'+(totalCost/totalShares).toFixed(2):'—'}</div></div>
@@ -3588,19 +3590,26 @@ function renderLong(){
     const db=b.l.date?new Date(b.l.date+'T12:00:00'):new Date(0);
     return db-da;
   });
-  const rows=sortedLongs.map(({l,i},rowNum)=>`
-    <tr data-li="${i}">
+  const rows=sortedLongs.map(({l,i},rowNum)=>{
+    const ca=!!l.calledAway;
+    const rowStyle=ca?'opacity:0.45;':'';
+    const caBtn=ca
+      ? `<button onclick="toggleLongCalledAway(${i})" title="Reopen position" style="background:var(--surface2);border:1px solid var(--border);color:var(--text3);cursor:pointer;padding:2px 8px;border-radius:4px;font-size:10px;letter-spacing:.04em;">Called Away ↩</button>`
+      : `<button onclick="toggleLongCalledAway(${i})" title="Mark as called away" style="background:none;border:1px solid var(--border);color:var(--text3);cursor:pointer;padding:2px 8px;border-radius:4px;font-size:10px;letter-spacing:.04em;">Mark Called Away</button>`;
+    return `<tr data-li="${i}" style="${rowStyle}">
       <td class="row-num">${rowNum+1}</td>
-      <td class="ecell narrow" data-li="${i}" data-lkey="date" onclick="activateLongCell(this)"><span class="cv td">${fd(l.date)}</span></td>
-      <td class="ecell narrow" data-li="${i}" data-lkey="ticker" onclick="activateLongCell(this)"><span class="cv"><span class="ticker">${l.ticker||''}</span></span></td>
-      <td class="ecell xnarrow" data-li="${i}" data-lkey="set" onclick="activateLongCell(this)"><span class="cv td">${l.set||1}</span></td>
-      <td class="ecell narrow" data-li="${i}" data-lkey="shares" onclick="activateLongCell(this)"><span class="cv">${l.shares!=null?Number(l.shares).toLocaleString():''}</span></td>
-      <td class="ecell narrow" data-li="${i}" data-lkey="price" onclick="activateLongCell(this)"><span class="cv">${l.price!=null?'$'+parseFloat(l.price).toFixed(2):''}</span></td>
-      <td class="ecell wide" data-li="${i}" data-lkey="notes" onclick="activateLongCell(this)"><span class="cv td">${l.notes||''}</span></td>
+      <td class="ecell narrow" data-li="${i}" data-lkey="date" onclick="${ca?'':('activateLongCell(this)')}"><span class="cv td">${fd(l.date)}</span></td>
+      <td class="ecell narrow" data-li="${i}" data-lkey="ticker" onclick="${ca?'':('activateLongCell(this)')}"><span class="cv"><span class="ticker">${l.ticker||''}</span></span></td>
+      <td class="ecell xnarrow" data-li="${i}" data-lkey="set" onclick="${ca?'':('activateLongCell(this)')}"><span class="cv td">${l.set||1}</span></td>
+      <td class="ecell narrow" data-li="${i}" data-lkey="shares" onclick="${ca?'':('activateLongCell(this)')}"><span class="cv">${l.shares!=null?Number(l.shares).toLocaleString():''}</span></td>
+      <td class="ecell narrow" data-li="${i}" data-lkey="price" onclick="${ca?'':('activateLongCell(this)')}"><span class="cv">${l.price!=null?'$'+parseFloat(l.price).toFixed(2):''}</span></td>
+      <td class="ecell wide" data-li="${i}" data-lkey="notes" onclick="${ca?'':('activateLongCell(this)')}"><span class="cv td">${l.notes||''}</span></td>
+      <td style="text-align:center;white-space:nowrap;background:var(--surface);border-bottom:1px solid var(--border);padding:4px 8px;">${caBtn}</td>
       <td style="text-align:center;background:var(--surface);border-bottom:1px solid var(--border);">
         <button onclick="deleteLong(${i})" style="background:none;border:none;color:var(--text3);cursor:pointer;padding:4px 8px;border-radius:4px;font-size:13px;" onmouseover="this.style.color='var(--red)'" onmouseout="this.style.color='var(--text3)'">✕</button>
       </td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 
   container.innerHTML=`
     ${stats}
@@ -3612,7 +3621,7 @@ function renderLong(){
       <table class="log-table">
         <thead><tr>
           <th class="col-row">#</th>
-          <th>Date</th><th>Ticker</th><th>Set</th><th>Shares</th><th>Price Paid</th><th>Notes</th><th style="min-width:36px;"></th>
+          <th>Date</th><th>Ticker</th><th>Set</th><th>Shares</th><th>Price Paid</th><th>Notes</th><th style="min-width:120px;">Status</th><th style="min-width:36px;"></th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
@@ -3663,7 +3672,7 @@ function commitLongCell(li,key,rawVal){
 }
 
 function addLong(){
-  longs.push({id:uidLong(),date:today(),ticker:'',set:1,shares:null,price:null,notes:''});
+  longs.push({id:uidLong(),date:today(),ticker:'',set:1,shares:null,price:null,notes:'',calledAway:false});
   saveLongs();
   renderLong();
   const outer=document.querySelector('#long-content .log-outer');
@@ -3673,6 +3682,13 @@ function addLong(){
 function deleteLong(i){
   if(!confirm('Delete this position?')) return;
   longs.splice(i,1);
+  saveLongs();
+  renderLong();
+  renderShares();
+}
+
+function toggleLongCalledAway(i){
+  longs[i].calledAway=!longs[i].calledAway;
   saveLongs();
   renderLong();
   renderShares();
