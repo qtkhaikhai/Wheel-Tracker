@@ -980,6 +980,8 @@ function selectProfile(id){
   if(badge){badge.style.display='inline-flex';dot.style.background=col.bg;nameEl.textContent=p.name;}
   const switchBtn=document.getElementById('btn-switch-profile');
   if(switchBtn) switchBtn.style.display='';
+  // Persist active profile so the same profile auto-loads on next visit / other computers
+  localStorage.setItem('wt_active_profile', p.id);
   // Hide overlay
   document.getElementById('profile-overlay').style.display='none';
   // Load local data for this profile first so app is immediately usable
@@ -1329,7 +1331,17 @@ function _renderAll(){
 const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
 
 // ── SETTINGS ─────────────────────────────────────────────────
-let settings=JSON.parse(localStorage.getItem('wt_settings')||'{}');
+// settings are profile-scoped (wt_settings_<id>); legacy key 'wt_settings' is kept as a one-time fallback
+let settings=(()=>{
+  try{
+    let _pid='default';
+    try{const _ap=localStorage.getItem('wt_active_profile');if(_ap)_pid=_ap;}catch(e){}
+    const scoped=localStorage.getItem('wt_settings_'+_pid);
+    if(scoped) return JSON.parse(scoped);
+    const legacy=localStorage.getItem('wt_settings');
+    return legacy?JSON.parse(legacy):{};
+  }catch(e){return {};}
+})();
 if(!settings.capital) settings.capital=75000;
 const DEFAULT_CAPITAL=75000;
 function getCapital(){ return parseFloat(settings.capital)||75000; }
@@ -1387,22 +1399,51 @@ const FIELDS=[
   {key:'_dte',      label:'DTE',          type:'calc',   width:'xnarrow'},
 ];
 
-let trades=JSON.parse(localStorage.getItem('wt_trades')||'[]');
-// Normalize fees on load (read-only key used only as fallback before profile loads)
+// trades are profile-scoped (wt_trades_<id>); legacy key 'wt_trades' is kept as a one-time fallback
+let trades=(()=>{
+  try{
+    let _pid='default';
+    try{const _ap=localStorage.getItem('wt_active_profile');if(_ap)_pid=_ap;}catch(e){}
+    const scoped=localStorage.getItem('wt_trades_'+_pid);
+    if(scoped) return JSON.parse(scoped);
+    const legacy=localStorage.getItem('wt_trades');
+    return legacy?JSON.parse(legacy):[];
+  }catch(e){return [];}
+})();
+// Normalize fees on load
 trades.forEach(t=>{
   t.openFees=0.65;
   const ctc=parseFloat(t.costToClose)||0;
   const hasClose=t.closeDate&&t.closeDate!=='0'&&t.closeDate!=='null'&&String(t.closeDate).trim()!=='';
   if(hasClose||ctc>0){ t.closeFees=ctc>=0.05?0.65:0.01; }
 });
-// NOTE: intentionally NOT writing back to wt_trades here — profile load overwrites trades
 
-let longs=JSON.parse(localStorage.getItem('wt_longs')||'[]');
+// longs are profile-scoped (wt_longs_<id>); legacy key 'wt_longs' is kept as a one-time fallback
+let longs=(()=>{
+  try{
+    let _pid='default';
+    try{const _ap=localStorage.getItem('wt_active_profile');if(_ap)_pid=_ap;}catch(e){}
+    const scoped=localStorage.getItem('wt_longs_'+_pid);
+    if(scoped) return JSON.parse(scoped);
+    const legacy=localStorage.getItem('wt_longs');
+    return legacy?JSON.parse(legacy):[];
+  }catch(e){return [];}
+})();
 function saveLongs(){ const _lpid=_activeProfile?_activeProfile.id:'default'; localStorage.setItem('wt_longs_'+_lpid,JSON.stringify(longs)); _scheduleDriveSave(); }
 function uidLong(){ return 'l'+Date.now()+Math.random(); }
 
 // SHARE PRICES (manual, per ticker)
-let sharePrices=JSON.parse(localStorage.getItem('wt_share_prices')||'{}');
+// sharePrices are profile-scoped (wt_sp_<id>); legacy key 'wt_share_prices' is kept as a one-time fallback
+let sharePrices=(()=>{
+  try{
+    let _pid='default';
+    try{const _ap=localStorage.getItem('wt_active_profile');if(_ap)_pid=_ap;}catch(e){}
+    const scoped=localStorage.getItem('wt_sp_'+_pid);
+    if(scoped) return JSON.parse(scoped);
+    const legacy=localStorage.getItem('wt_share_prices');
+    return legacy?JSON.parse(legacy):{};
+  }catch(e){return {};}
+})();
 function saveSharePrices(){ const _sppid=_activeProfile?_activeProfile.id:'default'; localStorage.setItem('wt_sp_'+_sppid,JSON.stringify(sharePrices)); _scheduleDriveSave(); }
 function updateSharePrice(ticker,val){
   const p=parseFloat(val);
