@@ -1336,7 +1336,6 @@ function getCapital(){ return parseFloat(settings.capital)||75000; }
 function saveSetting(key,val){
   settings[key]=key==='capital'?parseFloat(val)||75000:val;
   const _setpid=_activeProfile?_activeProfile.id:'default'; localStorage.setItem('wt_settings_'+_setpid,JSON.stringify(settings));
-  localStorage.setItem('wt_settings',JSON.stringify(settings));
   _scheduleDriveSave();
   renderDerived();
 }
@@ -1399,12 +1398,12 @@ trades.forEach(t=>{
 // NOTE: intentionally NOT writing back to wt_trades here — profile load overwrites trades
 
 let longs=JSON.parse(localStorage.getItem('wt_longs')||'[]');
-function saveLongs(){ const _lpid=_activeProfile?_activeProfile.id:'default'; localStorage.setItem('wt_longs_'+_lpid,JSON.stringify(longs)); localStorage.setItem('wt_longs',JSON.stringify(longs)); _scheduleDriveSave(); }
+function saveLongs(){ const _lpid=_activeProfile?_activeProfile.id:'default'; localStorage.setItem('wt_longs_'+_lpid,JSON.stringify(longs)); _scheduleDriveSave(); }
 function uidLong(){ return 'l'+Date.now()+Math.random(); }
 
 // SHARE PRICES (manual, per ticker)
 let sharePrices=JSON.parse(localStorage.getItem('wt_share_prices')||'{}');
-function saveSharePrices(){ const _sppid=_activeProfile?_activeProfile.id:'default'; localStorage.setItem('wt_sp_'+_sppid,JSON.stringify(sharePrices)); localStorage.setItem('wt_share_prices',JSON.stringify(sharePrices)); _scheduleDriveSave(); }
+function saveSharePrices(){ const _sppid=_activeProfile?_activeProfile.id:'default'; localStorage.setItem('wt_sp_'+_sppid,JSON.stringify(sharePrices)); _scheduleDriveSave(); }
 function updateSharePrice(ticker,val){
   const p=parseFloat(val);
   if(isNaN(p)||p<=0){ delete sharePrices[ticker]; } else { sharePrices[ticker]=p; }
@@ -2118,7 +2117,7 @@ document.addEventListener('keydown',e=>{
 });
 
 function uid(){ return Date.now()+Math.random(); }
-function save(){ const _spid=_activeProfile?_activeProfile.id:'default'; localStorage.setItem('wt_trades_'+_spid,JSON.stringify(trades)); localStorage.setItem('wt_trades',JSON.stringify(trades)); _scheduleDriveSave(); try { if(document.getElementById('panel-summary')&&document.getElementById('panel-summary').classList.contains('active')) renderSummary(); } catch(e){ console.error('save->renderSummary:',e); } }
+function save(){ const _spid=_activeProfile?_activeProfile.id:'default'; localStorage.setItem('wt_trades_'+_spid,JSON.stringify(trades)); _scheduleDriveSave(); try { if(document.getElementById('panel-summary')&&document.getElementById('panel-summary').classList.contains('active')) renderSummary(); } catch(e){ console.error('save->renderSummary:',e); } }
 
 function newTrade(){
   return {id:uid(),ticker:'',set:1,openDate:today(),expDate:'',type:'P',contracts:1,strike:'',premium:'',openFees:0.65,closeDate:'',costToClose:0,closeFees:0,assigned:'No',notes:''};
@@ -4120,7 +4119,8 @@ function onBackupFile(e){
       sharePrices=(data.sharePrices&&typeof data.sharePrices==='object')?data.sharePrices:{};
       if(data.settings&&typeof data.settings==='object'){
         settings=Object.assign({}, settings, data.settings);
-        localStorage.setItem('wt_settings',JSON.stringify(settings));
+        const _rspid=_activeProfile?_activeProfile.id:'default';
+        localStorage.setItem('wt_settings_'+_rspid,JSON.stringify(settings));
       }
       save(); saveLongs(); saveSharePrices();
       try { renderLog(); } catch(err){ console.error(err); }
