@@ -1164,8 +1164,7 @@ function restoreLocalBackup(){
 }
 
 async function loadFromDrive(userTriggered){
-  _setDriveStatus('saving','Connecting…');
-  let applied=false;
+  _setDriveStatus('saving','Connecting\u2026');
   try{
     const folderId=await _ensureDriveFolder();
     const fileId=await _findDriveFile(folderId);
@@ -1173,7 +1172,7 @@ async function loadFromDrive(userTriggered){
       _driveFileId=fileId;
       const raw=await _driveReq('GET',`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
       const text=typeof raw==='string'?raw:JSON.stringify(raw);
-      applied=_applyDriveData(JSON.parse(text));
+      const applied=_applyDriveData(JSON.parse(text));
       if(applied) _setDriveStatus('synced','Synced \u2713');
     } else {
       _driveFileId=null;
@@ -1184,9 +1183,7 @@ async function loadFromDrive(userTriggered){
     _setDriveStatus('error','Not signed in \u2014 data saved locally');
   }
   _driveReady=true;
-  // Only re-render if Drive actually changed data — prevents overwriting a
-  // freshly-loaded profile's correct local data with stale in-memory state
-  if(applied) _renderAll();
+  _renderAll();
 }
 
 function _applyDriveData(d){
