@@ -1165,6 +1165,7 @@ function restoreLocalBackup(){
 
 async function loadFromDrive(userTriggered){
   _setDriveStatus('saving','Connecting…');
+  let applied=false;
   try{
     const folderId=await _ensureDriveFolder();
     const fileId=await _findDriveFile(folderId);
@@ -1172,22 +1173,24 @@ async function loadFromDrive(userTriggered){
       _driveFileId=fileId;
       const raw=await _driveReq('GET',`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
       const text=typeof raw==='string'?raw:JSON.stringify(raw);
-      _applyDriveData(JSON.parse(text));
-      _setDriveStatus('synced','Synced ✓');
+      applied=_applyDriveData(JSON.parse(text));
+      if(applied) _setDriveStatus('synced','Synced \u2713');
     } else {
       _driveFileId=null;
-      _setDriveStatus('synced',userTriggered?'No Drive file yet':'Ready — sign in to sync');
+      _setDriveStatus('synced',userTriggered?'No Drive file yet':'Ready \u2014 sign in to sync');
     }
   }catch(e){
     console.error('Drive load:',e);
-    _setDriveStatus('error','Not signed in — data saved locally');
+    _setDriveStatus('error','Not signed in \u2014 data saved locally');
   }
   _driveReady=true;
-  _renderAll();
+  // Only re-render if Drive actually changed data — prevents overwriting a
+  // freshly-loaded profile's correct local data with stale in-memory state
+  if(applied) _renderAll();
 }
 
 function _applyDriveData(d){
-  if(!d||typeof d!=='object') return;
+  if(!d||typeof d!=='object') return false;
 
   const pid=_activeProfile?_activeProfile.id:'default';
   const localTrades=JSON.parse(localStorage.getItem('wt_trades_'+pid)||'[]');
@@ -1196,29 +1199,29 @@ function _applyDriveData(d){
   if(d._meta&&typeof d._meta.tradeCount==='number'&&Array.isArray(d.trades)){
     if(d._meta.tradeCount!==d.trades.length){
       console.warn('Drive load blocked: _meta.tradeCount mismatch',d._meta.tradeCount,'vs',d.trades.length);
-      _setDriveStatus('error','Drive file appears corrupt — kept local data');
-      showToast('Drive file looks corrupt (count mismatch) — keeping local data', true);
-      return;
+      _setDriveStatus('error','Drive file appears corrupt \u2014 kept local data');
+      showToast('Drive file looks corrupt (count mismatch) \u2014 keeping local data', true);
+      return false;
     }
   }
 
   // ── Guard: Drive has 0 trades but local has data ──
   if(Array.isArray(d.trades)&&d.trades.length===0&&localTrades.length>0){
     console.warn('Drive load blocked: Drive has 0 trades, local has',localTrades.length);
-    _setDriveStatus('error','Drive file is empty — kept local data');
-    showToast('Drive file appears empty — keeping your '+localTrades.length+' local trade(s)', true);
-    return;
+    _setDriveStatus('error','Drive file is empty \u2014 kept local data');
+    showToast('Drive file appears empty \u2014 keeping your '+localTrades.length+' local trade(s)', true);
+    return false;
   }
 
   // ── Guard: Drive has significantly fewer trades than local (>50% drop) ──
   if(Array.isArray(d.trades)&&localTrades.length>5&&d.trades.length<localTrades.length*0.5){
     const ok=confirm(
-      `Drive has ${d.trades.length} trade(s) but you have ${localTrades.length} locally.\n\nThis is a large reduction — load from Drive anyway?\n\nCancel to keep your local data.`
+      `Drive has ${d.trades.length} trade(s) but you have ${localTrades.length} locally.\n\nThis is a large reduction \u2014 load from Drive anyway?\n\nCancel to keep your local data.`
     );
     if(!ok){
       _setDriveStatus('idle','Kept local data');
-      showToast('Kept local data — Drive load cancelled');
-      return;
+      showToast('Kept local data \u2014 Drive load cancelled');
+      return false;
     }
   }
 
@@ -1252,6 +1255,7 @@ function _applyDriveData(d){
   localStorage.setItem('wt_sp_'+pid,JSON.stringify(sharePrices));
   localStorage.setItem('wt_settings_'+pid,JSON.stringify(settings));
   if(d.settings&&d.settings.theme) applyTheme(d.settings.theme);
+  return true;
 }
 
 async function _saveToDrive(){
