@@ -668,7 +668,15 @@ tbody td{padding:10px 13px;white-space:nowrap;}
             <button class="settings-btn" onclick="loadFromDrive(true)">↓ Load from Drive</button>
           </div>
         </div>
-      </div>
+        <div class="settings-row">
+          <div class="settings-label">
+            <div class="settings-label-title">Restore Last Snapshot</div>
+            <div class="settings-label-sub">If a Drive load or other operation replaced your data unexpectedly, this restores the automatic snapshot taken just before the last overwrite. <b style="color:var(--amber);">Only one snapshot is kept at a time.</b></div>
+          </div>
+          <div class="settings-control">
+            <button class="settings-btn" id="btn-restore-snapshot" onclick="restoreLocalBackup()">⟲ Restore Snapshot</button>
+          </div>
+        </div>
 
       <div class="settings-section">
         <div class="settings-section-title">Data</div>
@@ -1107,9 +1115,52 @@ async function _findDriveFile(folderId){
 
 function _buildPayload(){
   return JSON.stringify({
-    _meta:{app:'wheel-tracker',version:2,saved:new Date().toISOString()},
+    _meta:{app:'wheel-tracker',version:2,saved:new Date().toISOString(),tradeCount:trades.length,longsCount:longs.length},
     trades,longs,sharePrices,settings
   },null,2);
+}
+
+// ── Drive save validation ────────────────────────────────────────
+function _isPayloadSafe(){
+  if(!Array.isArray(trades)) return false;
+  // Block if in-memory trades are empty but localStorage has data (state corruption)
+  const pid=_activeProfile?_activeProfile.id:'default';
+  const savedCount=JSON.parse(localStorage.getItem('wt_trades_'+pid)||'[]').length;
+  if(trades.length===0&&savedCount>0) return false;
+  // Sanity-check first few trades have minimum required fields
+  const sample=trades.slice(0,5);
+  if(sample.length>0&&!sample.every(t=>t.id&&t.ticker)) return false;
+  return true;
+}
+
+// ── Pre-overwrite local snapshot ─────────────────────────────────
+function _backupLocally(){
+  try{
+    const pid=_activeProfile?_activeProfile.id:'default';
+    const snapshot={
+      trades:[...trades],longs:[...longs],sharePrices:{...sharePrices},
+      savedAt:Date.now(),tradeCount:trades.length
+    };
+    localStorage.setItem('wt_backup_'+pid,JSON.stringify(snapshot));
+  }catch(e){ console.warn('_backupLocally failed:',e); }
+}
+
+function restoreLocalBackup(){
+  const pid=_activeProfile?_activeProfile.id:'default';
+  const raw=localStorage.getItem('wt_backup_'+pid);
+  if(!raw){ alert('No local backup snapshot found.'); return; }
+  try{
+    const snap=JSON.parse(raw);
+    if(!Array.isArray(snap.trades)||snap.trades.length===0){ alert('Backup snapshot is empty — nothing to restore.'); return; }
+    const when=snap.savedAt?new Date(snap.savedAt).toLocaleString():'unknown time';
+    if(!confirm(`Restore snapshot from ${when}?\nThis will replace your current ${trades.length} trade(s) with ${snap.trades.length} trade(s).`)) return;
+    trades=snap.trades;
+    if(Array.isArray(snap.longs)) longs=snap.longs;
+    if(snap.sharePrices&&typeof snap.sharePrices==='object') sharePrices=snap.sharePrices;
+    save(); saveLongs();
+    _renderAll();
+    showToast('Restored from local backup snapshot ✓');
+  }catch(e){ alert('Failed to parse backup: '+e.message); }
 }
 
 async function loadFromDrive(userTriggered){
@@ -1137,10 +1188,45 @@ async function loadFromDrive(userTriggered){
 
 function _applyDriveData(d){
   if(!d||typeof d!=='object') return;
+
+  const pid=_activeProfile?_activeProfile.id:'default';
+  const localTrades=JSON.parse(localStorage.getItem('wt_trades_'+pid)||'[]');
+
+  // ── Guard: Drive file has _meta tradeCount mismatch (corrupt file) ──
+  if(d._meta&&typeof d._meta.tradeCount==='number'&&Array.isArray(d.trades)){
+    if(d._meta.tradeCount!==d.trades.length){
+      console.warn('Drive load blocked: _meta.tradeCount mismatch',d._meta.tradeCount,'vs',d.trades.length);
+      _setDriveStatus('error','Drive file appears corrupt — kept local data');
+      showToast('Drive file looks corrupt (count mismatch) — keeping local data', true);
+      return;
+    }
+  }
+
+  // ── Guard: Drive has 0 trades but local has data ──
+  if(Array.isArray(d.trades)&&d.trades.length===0&&localTrades.length>0){
+    console.warn('Drive load blocked: Drive has 0 trades, local has',localTrades.length);
+    _setDriveStatus('error','Drive file is empty — kept local data');
+    showToast('Drive file appears empty — keeping your '+localTrades.length+' local trade(s)', true);
+    return;
+  }
+
+  // ── Guard: Drive has significantly fewer trades than local (>50% drop) ──
+  if(Array.isArray(d.trades)&&localTrades.length>5&&d.trades.length<localTrades.length*0.5){
+    const ok=confirm(
+      `Drive has ${d.trades.length} trade(s) but you have ${localTrades.length} locally.\n\nThis is a large reduction — load from Drive anyway?\n\nCancel to keep your local data.`
+    );
+    if(!ok){
+      _setDriveStatus('idle','Kept local data');
+      showToast('Kept local data — Drive load cancelled');
+      return;
+    }
+  }
+
+  // ── Snapshot current state before overwriting ──
+  _backupLocally();
+
   if(Array.isArray(d.trades)){
     // Preserve any openDates already stored locally (they may have been patched)
-    const pid=_activeProfile?_activeProfile.id:'default';
-    const localTrades=JSON.parse(localStorage.getItem('wt_trades_'+pid)||'[]');
     const localById={};
     localTrades.forEach(t=>{ if(t.id) localById[t.id]=t; });
     trades=d.trades.map(dt=>{
@@ -1161,7 +1247,6 @@ function _applyDriveData(d){
     const hasClose=t.closeDate&&t.closeDate!=='0'&&t.closeDate!=='null'&&String(t.closeDate).trim()!=='';
     if(hasClose||ctc>0){t.closeFees=ctc>=0.05?0.65:0.01;}
   });
-  const pid=_activeProfile?_activeProfile.id:'default';
   localStorage.setItem('wt_trades_'+pid,JSON.stringify(trades));
   localStorage.setItem('wt_longs_'+pid,JSON.stringify(longs));
   localStorage.setItem('wt_sp_'+pid,JSON.stringify(sharePrices));
@@ -1178,6 +1263,13 @@ async function _saveToDrive(){
   localStorage.setItem('wt_settings_'+pid,JSON.stringify(settings));
   if(!_accessToken||Date.now()>=_tokenExpiry-60000){
     _setDriveStatus('idle','Saved locally (sign in to sync Drive)');
+    return;
+  }
+  // Validate before touching Drive — never overwrite good data with bad
+  if(!_isPayloadSafe()){
+    console.warn('Drive save blocked: payload failed safety check',{trades:trades.length});
+    _setDriveStatus('error','Save blocked — data looks empty or corrupt');
+    showToast('Drive save blocked: data appears empty or corrupt. Check your trades.', true);
     return;
   }
   _setDriveStatus('saving','Saving to Drive…');
@@ -1251,6 +1343,25 @@ function renderSettings(){
   const el=document.getElementById('setting-capital');
   if(el) el.value=settings.capital||75000;
   renderThemeSwitcher();
+  // Update snapshot button label with timestamp if one exists
+  const btn=document.getElementById('btn-restore-snapshot');
+  if(btn){
+    const pid=_activeProfile?_activeProfile.id:'default';
+    const raw=localStorage.getItem('wt_backup_'+pid);
+    if(raw){
+      try{
+        const snap=JSON.parse(raw);
+        const when=snap.savedAt?new Date(snap.savedAt).toLocaleString():'unknown';
+        btn.title=`Snapshot: ${snap.tradeCount||'?'} trades from ${when}`;
+        btn.textContent=`⟲ Restore Snapshot (${snap.tradeCount||'?'} trades)`;
+        btn.disabled=false;
+      }catch(e){ btn.textContent='⟲ Restore Snapshot'; btn.disabled=true; }
+    } else {
+      btn.textContent='⟲ Restore Snapshot (none yet)';
+      btn.disabled=true;
+      btn.style.opacity='0.5';
+    }
+  }
 }
 
 // Schema: each trade has these fields (all editable)
