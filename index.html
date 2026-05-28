@@ -1500,7 +1500,8 @@ function updateSharePrice(ticker,val){
 //  SUMMARY PAGE
 // =====================================
 let summaryRange='all';   // week|month|quarter|ytd|all
-let summaryExpWeek='all'; // 'all' or YYYY-MM-DD Friday of week
+let summaryExpWeek=(()=>{ const d=new Date(); d.setHours(0,0,0,0); while(d.getDay()!==5) d.setDate(d.getDate()+1); return d.toISOString().slice(0,10); })(); // current week's Friday
+let summaryExpWeekOpen=new Set(); // which weeks are expanded in the All tab
 let summaryChartMode='total'; // total|premium|pl
 let summaryCalMonth=new Date(); summaryCalMonth.setDate(1);
 
@@ -1514,6 +1515,11 @@ function setSummaryExpWeek(w, btn){
   summaryExpWeek=w;
   document.querySelectorAll('#summary-exp-week-btns button').forEach(b=>b.classList.remove('active'));
   if(btn) btn.classList.add('active');
+  renderSummary();
+}
+function toggleExpWeekRow(key){
+  if(summaryExpWeekOpen.has(key)) summaryExpWeekOpen.delete(key);
+  else summaryExpWeekOpen.add(key);
   renderSummary();
 }
 function getNext4Fridays(){
@@ -1841,19 +1847,17 @@ function _renderSummaryInner(container){
 
   // ──────── UPCOMING EXPIRATIONS + INCOME CALENDAR
   const fridays=getNext4Fridays();
-  let upcoming=openAll.slice().filter(t=>t.expDate);
-  if(summaryExpWeek!=='all'){
-    upcoming=upcoming.filter(t=>fridayKeyOf(t.expDate)===summaryExpWeek);
-  }
-  upcoming.sort((a,b)=>new Date(a.expDate)-new Date(b.expDate));
-  const upcomingLimited=upcoming;
-  // per-week counts for badges on buttons
+  // net premium helper (premium - open fees)
+  const netPrem=t=>{ const k=parseInt(t.contracts)||1; return (parseFloat(t.premium)||0)*k*100-(parseFloat(t.openFees)||0); };
+
+  // per-week counts for badges on tab buttons
   const weekCounts={};
   fridays.forEach(f=>{ const k=f.toISOString().slice(0,10); weekCounts[k]=0; });
   openAll.filter(t=>t.expDate).forEach(t=>{
     const k=fridayKeyOf(t.expDate);
     if(k in weekCounts) weekCounts[k]++;
   });
+
   const expWeekBtns=`
     <div class="sum-range-btns" id="summary-exp-week-btns" style="margin-left:auto;">
       <button class="${summaryExpWeek==='all'?'active':''}" onclick="setSummaryExpWeek('all',this)">All</button>
@@ -1864,16 +1868,14 @@ function _renderSummaryInner(container){
         return `<button class="${summaryExpWeek===k?'active':''}" onclick="setSummaryExpWeek('${k}',this)" title="${n} contract${n!==1?'s':''}">${lbl}${n>0?` <span style="opacity:.6;font-size:9px;">${n}</span>`:''}</button>`;
       }).join('')}
     </div>`;
-  // net premium helper (premium - open fees)
-  const netPrem=t=>{ const k=parseInt(t.contracts)||1; return (parseFloat(t.premium)||0)*k*100-(parseFloat(t.openFees)||0); };
 
-  const expRows=upcomingLimited.map(t=>{
+  // Helper: render a single trade row (shared by All-expanded and week views)
+  const renderTradeRow=(t)=>{
     const d=dte(t.expDate)??0;
     const dteCol=d<=0?'var(--red)':d<=7?'var(--red)':d<=21?'var(--amber)':'var(--green)';
     const k=parseInt(t.contracts)||1;
     const prem=(parseFloat(t.premium)||0)*k*100;
     const isPut=t.type==='P';
-    // puts=blue, calls=amber to match header labels
     const premCol=isPut?'var(--blue)':'var(--amber)';
     return `<div class="sum-exp-row" style="display:grid;grid-template-columns:140px 1fr 1fr 1fr;align-items:center;padding:9px 18px;border-bottom:1px solid var(--border);font-size:12px;gap:8px;">
       <span style="display:flex;align-items:center;gap:7px;">
@@ -1890,44 +1892,78 @@ function _renderSummaryInner(container){
         </span>
       </span>
     </div>`;
-  }).join('');
+  };
 
-  // ── totals row — always sum full upcoming list (not the display-limited slice)
-  const totalsSource=upcoming;
-  const totalAll=totalsSource.reduce((s,t)=>s+netPrem(t),0);
-  const totalPuts=totalsSource.filter(t=>t.type==='P').reduce((s,t)=>s+netPrem(t),0);
-  const totalCalls=totalsSource.filter(t=>t.type==='C').reduce((s,t)=>s+netPrem(t),0);
-  // label: month name for All, week date (e.g. "5/16") for specific week
-  const now=new Date();
-  const totLabel=summaryExpWeek==='all'
-    ? 'Total Upcoming'
-    : (()=>{ const f=new Date(summaryExpWeek+'T12:00:00'); return (f.getMonth()+1)+'/'+f.getDate(); })();
-  const totalsRow=upcomingLimited.length?`
-    <div style="display:grid;grid-template-columns:140px 1fr 1fr 1fr;align-items:center;padding:10px 18px;background:var(--surface2);border-bottom:1px solid var(--border2);font-size:11px;gap:8px;">
-      <span style="font-family:var(--sans);font-weight:700;font-size:12px;color:var(--text2);">${totLabel}</span>
-      <span style="display:flex;flex-direction:column;gap:1px;">
-        <span style="font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--text3);">Total</span>
-        <span style="font-family:var(--sans);font-weight:700;color:var(--green);">${fm(totalAll)}</span>
-      </span>
-      <span style="display:flex;flex-direction:column;gap:1px;">
-        <span style="font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--blue);">Puts</span>
-        <span style="font-family:var(--sans);font-weight:700;color:var(--blue);">${fm(totalPuts)}</span>
-      </span>
-      <span style="display:flex;flex-direction:column;gap:1px;">
-        <span style="font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--amber);">Calls</span>
-        <span style="font-family:var(--sans);font-weight:700;color:var(--amber);">${fm(totalCalls)}</span>
-      </span>
-    </div>`:'';
+  // Build the body content depending on which tab is selected
+  let expContent='';
+  if(summaryExpWeek==='all'){
+    // All tab: 4 collapsible week summary rows
+    expContent=fridays.map(f=>{
+      const fk=f.toISOString().slice(0,10);
+      const weekTrades=openAll.filter(t=>t.expDate&&fridayKeyOf(t.expDate)===fk).sort((a,b)=>new Date(a.expDate)-new Date(b.expDate));
+      const weekTotal=weekTrades.reduce((s,t)=>s+netPrem(t),0);
+      const weekPuts=weekTrades.filter(t=>t.type==='P').reduce((s,t)=>s+netPrem(t),0);
+      const weekCalls=weekTrades.filter(t=>t.type==='C').reduce((s,t)=>s+netPrem(t),0);
+      const lbl=(f.getMonth()+1)+'/'+f.getDate();
+      const isOpen=summaryExpWeekOpen.has(fk);
+      const arrow=isOpen?'▾':'▸';
+      const hdrBg=isOpen?'var(--surface2)':'var(--surface)';
+      const hdrRow=`<div onclick="toggleExpWeekRow('${fk}')" style="display:grid;grid-template-columns:140px 1fr 1fr 1fr;align-items:center;padding:10px 18px;background:${hdrBg};border-bottom:1px solid var(--border2);font-size:11px;gap:8px;cursor:pointer;user-select:none;" onmouseenter="this.style.background='var(--surface2)'" onmouseleave="this.style.background='${hdrBg}'">
+        <span style="display:flex;align-items:center;gap:6px;font-family:var(--sans);font-weight:700;font-size:12px;color:var(--text);">
+          <span style="color:var(--text3);font-size:10px;min-width:10px;">${arrow}</span>
+          Week ${lbl}${weekTrades.length>0?` <span style="font-size:9px;color:var(--text3);font-weight:400;"> ${weekTrades.length}K</span>`:''}
+        </span>
+        <span style="display:flex;flex-direction:column;gap:1px;">
+          <span style="font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--text3);">Total</span>
+          <span style="font-family:var(--sans);font-weight:700;color:${weekTrades.length?'var(--green)':'var(--text3)'};">${weekTrades.length?fm(weekTotal):'—'}</span>
+        </span>
+        <span style="display:flex;flex-direction:column;gap:1px;">
+          <span style="font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--blue);">Puts</span>
+          <span style="font-family:var(--sans);font-weight:700;color:${weekPuts?'var(--blue)':'var(--text3)'};">${weekPuts?fm(weekPuts):'—'}</span>
+        </span>
+        <span style="display:flex;flex-direction:column;gap:1px;">
+          <span style="font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--amber);">Calls</span>
+          <span style="font-family:var(--sans);font-weight:700;color:${weekCalls?'var(--amber)':'var(--text3)'};">${weekCalls?fm(weekCalls):'—'}</span>
+        </span>
+      </div>`;
+      const detailRows=isOpen&&weekTrades.length?weekTrades.map(renderTradeRow).join(''):'';
+      return hdrRow+detailRows;
+    }).join('');
+    if(!expContent) expContent=`<div style="padding:30px;text-align:center;color:var(--text3);font-size:12px;">No open positions</div>`;
+  } else {
+    // Individual week tab: flat list with totals header
+    const filtered=openAll.filter(t=>t.expDate&&fridayKeyOf(t.expDate)===summaryExpWeek).sort((a,b)=>new Date(a.expDate)-new Date(b.expDate));
+    const weekTotal=filtered.reduce((s,t)=>s+netPrem(t),0);
+    const weekPuts=filtered.filter(t=>t.type==='P').reduce((s,t)=>s+netPrem(t),0);
+    const weekCalls=filtered.filter(t=>t.type==='C').reduce((s,t)=>s+netPrem(t),0);
+    const fDate=new Date(summaryExpWeek+'T12:00:00');
+    const totLabel=(fDate.getMonth()+1)+'/'+fDate.getDate();
+    const totalsRow=filtered.length?`
+      <div style="display:grid;grid-template-columns:140px 1fr 1fr 1fr;align-items:center;padding:10px 18px;background:var(--surface2);border-bottom:1px solid var(--border2);font-size:11px;gap:8px;">
+        <span style="font-family:var(--sans);font-weight:700;font-size:12px;color:var(--text2);">${totLabel}</span>
+        <span style="display:flex;flex-direction:column;gap:1px;">
+          <span style="font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--text3);">Total</span>
+          <span style="font-family:var(--sans);font-weight:700;color:var(--green);">${fm(weekTotal)}</span>
+        </span>
+        <span style="display:flex;flex-direction:column;gap:1px;">
+          <span style="font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--blue);">Puts</span>
+          <span style="font-family:var(--sans);font-weight:700;color:var(--blue);">${fm(weekPuts)}</span>
+        </span>
+        <span style="display:flex;flex-direction:column;gap:1px;">
+          <span style="font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--amber);">Calls</span>
+          <span style="font-family:var(--sans);font-weight:700;color:var(--amber);">${fm(weekCalls)}</span>
+        </span>
+      </div>`:'';
+    expContent=totalsRow+(filtered.length?filtered.map(renderTradeRow).join(''):`<div style="padding:30px;text-align:center;color:var(--text3);font-size:12px;">No contracts expiring that week</div>`);
+  }
 
-  const expEmpty=summaryExpWeek==='all'?'No open positions':'No contracts expiring that week';
   const expansion=`
     <div class="sum-panel">
       <div class="sum-panel-hdr" style="flex-wrap:wrap;gap:8px;">
         <span class="sum-panel-title">Upcoming Expirations</span>
         ${expWeekBtns}
       </div>
-      ${totalsRow}
-      <div class="sum-panel-body" style="max-height:320px;overflow-y:auto;">${expRows||`<div style="padding:30px;text-align:center;color:var(--text3);font-size:12px;">${expEmpty}</div>`}</div>
+      <div class="sum-panel-body" style="max-height:360px;overflow-y:auto;">${expContent}</div>
     </div>`;
 
   // ──────── INCOME CALENDAR
@@ -3089,6 +3125,10 @@ function showWheelDetails(ticker, isUpdate, filterSet){
     const strike=parseFloat(t.strike)||0;
     lots.push({shares, strike, set:t.set, date:cd(t)||t.expDate||'', lotType:'wheel'});
   });
+  // Merge manual longs BEFORE call processing so assigned calls consume them in date order (FIFO)
+  longs.filter(l=>l.ticker===ticker&&l.shares&&l.price&&!l.calledAway&&(activeSetFilter===null||(parseInt(l.set)||1)===activeSetFilter)).forEach(l=>{
+    lots.push({shares:parseFloat(l.shares)||0, strike:parseFloat(l.price)||0, set:parseInt(l.set)||1, date:l.date||'', lotType:'long', notes:l.notes||''});
+  });
   lots.sort((a,b)=>new Date(a.date||0)-new Date(b.date||0));
   ts.filter(t=>t.type==='C'&&t.assigned==='Yes').forEach(t=>{
     let toRemove=(parseInt(t.contracts)||1)*100;
@@ -3098,11 +3138,6 @@ function showWheelDetails(ticker, isUpdate, filterSet){
       else { lot.shares-=toRemove; toRemove=0; }
     }
     lots=lots.filter(l=>l.shares>0);
-  });
-
-  // Merge long positions for this ticker (scoped to set filter if active)
-  longs.filter(l=>l.ticker===ticker&&l.shares&&l.price&&!l.calledAway&&(activeSetFilter===null||(parseInt(l.set)||1)===activeSetFilter)).forEach(l=>{
-    lots.push({shares:parseFloat(l.shares)||0, strike:parseFloat(l.price)||0, set:parseInt(l.set)||1, date:l.date||'', lotType:'long', notes:l.notes||''});
   });
 
   const sharesOwned=lots.reduce((s,l)=>s+l.shares,0);
@@ -3141,6 +3176,10 @@ function showWheelDetails(ticker, isUpdate, filterSet){
         var cb=putStrike-(prem-fees)/sh;
         _setLots.push({shares:sh,strike:putStrike,costBasis:cb,date:cd(t)||t.expDate||''});
       });
+      // Merge manual longs BEFORE call processing so assigned calls consume them in date order (FIFO)
+      longs.filter(function(l){return l.ticker===ticker&&l.shares&&l.price&&!l.calledAway&&(parseInt(l.set)||1)===s;}).forEach(function(l){
+        _setLots.push({shares:parseFloat(l.shares)||0,strike:parseFloat(l.price)||0,costBasis:parseFloat(l.price)||0,date:l.date||''});
+      });
       _setLots.sort(function(a,b){return new Date(a.date||0)-new Date(b.date||0);});
       setTrades.filter(function(t){return t.type==='C'&&t.assigned==='Yes';}).forEach(function(t){
         var callStrike=parseFloat(t.strike)||0;
@@ -3152,9 +3191,6 @@ function showWheelDetails(ticker, isUpdate, filterSet){
           else{_setLots[_j].shares-=toRemove;toRemove=0;}
         }
         _setLots=_setLots.filter(function(l){return l.shares>0;});
-      });
-      longs.filter(function(l){return l.ticker===ticker&&l.shares&&l.price&&!l.calledAway&&(parseInt(l.set)||1)===s;}).forEach(function(l){
-        _setLots.push({shares:parseFloat(l.shares)||0,strike:parseFloat(l.price)||0,costBasis:parseFloat(l.price)||0,date:l.date||''});
       });
       var _setShares=_setLots.reduce(function(sm,l){return sm+l.shares;},0);
       var _setInvested=_setLots.reduce(function(sm,l){return sm+l.shares*l.costBasis;},0);
@@ -3502,7 +3538,27 @@ function renderShares(){
     });
   });
 
-  // ── Pass 2: assigned calls → remove shares FIFO
+  // ── Pass 1.5: merge longs into inventory BEFORE call processing so calls consume them FIFO
+  longs.filter(l=>l.ticker&&l.shares&&l.price&&!l.calledAway).forEach(l=>{
+    const k=l.ticker;
+    if(inventory[k]){
+      inventory[k].lots.push({
+        type:'long', shares:parseFloat(l.shares)||0,
+        strike:parseFloat(l.price)||0,
+        contracts:null,
+        costBasis:parseFloat(l.price)||0,
+        premiumPut:0, openFees:0,
+        assignDate:l.date, set:parseInt(l.set)||1, id:l.id,
+        longNotes:l.notes||''
+      });
+    }
+  });
+  // Sort all lots by date before FIFO call removal
+  Object.values(inventory).forEach(g=>{
+    g.lots.sort((a,b)=>new Date(a.assignDate||0)-new Date(b.assignDate||0));
+  });
+
+  // ── Pass 2: assigned calls → remove shares FIFO (wheel + long lots)
   trades.filter(t=>t.type==='C'&&t.assigned==='Yes'&&t.ticker&&inventory[t.ticker]).forEach(t=>{
     const k=t.ticker;
     const callShares=(parseInt(t.contracts)||1)*100;
@@ -3525,27 +3581,10 @@ function renderShares(){
     }).filter(Boolean);
   });
 
-  // ── Pass 3: merge long positions into matching ticker+set, or create standalone entry
+  // ── Pass 3: collect standalone longs (tickers with no wheel history — already merged into inventory in Pass 1.5)
   const validLongs=longs.filter(l=>l.ticker&&l.shares&&l.price&&!l.calledAway);
-  const standaloneLongs=[]; // longs for tickers with no wheel inventory
-  validLongs.forEach(l=>{
-    const k=l.ticker;
-    const longSet=parseInt(l.set)||1;
-    if(inventory[k]){
-      // Inject as a long lot into the existing ticker group
-      inventory[k].lots.push({
-        type:'long', shares:parseFloat(l.shares)||0,
-        strike:parseFloat(l.price)||0,   // price paid = "strike equivalent"
-        contracts:null,
-        costBasis:parseFloat(l.price)||0,
-        premiumPut:0, openFees:0,
-        assignDate:l.date, set:longSet, id:l.id,
-        longNotes:l.notes||''
-      });
-    } else {
-      standaloneLongs.push(l);
-    }
-  });
+  const standaloneLongs=[]; // longs for tickers with no wheel inventory at all
+  validLongs.forEach(l=>{ if(!inventory[l.ticker]) standaloneLongs.push(l); });
 
   const held=Object.values(inventory).filter(g=>g.lots.length>0).sort((a,b)=>a.ticker.localeCompare(b.ticker));
   const calledAway=Object.values(inventory).filter(g=>g.calledAway.length>0).sort((a,b)=>a.ticker.localeCompare(b.ticker));
@@ -3659,6 +3698,13 @@ function renderShares(){
       if(!_byT[k]) _byT[k]={ticker:k,lots:[]};
       _byT[k].lots.push({shares:(parseInt(t.contracts)||1)*100,date:cd(t)||t.expDate||''});
     });
+    // Merge longs BEFORE assigned-call removal so calls consume them in date order
+    longs.filter(l=>l.ticker&&l.shares&&l.price&&!l.calledAway).forEach(l=>{
+      const k=l.ticker;
+      if(!_byT[k]) _byT[k]={ticker:k,lots:[]};
+      _byT[k].lots.push({shares:parseFloat(l.shares)||0,date:l.date||'',isLong:true});
+    });
+    Object.values(_byT).forEach(g=>g.lots.sort((a,b)=>new Date(a.date||0)-new Date(b.date||0)));
     trades.filter(t=>t.type==='C'&&t.assigned==='Yes'&&t.ticker&&_byT[t.ticker]).forEach(t=>{
       let rem=(parseInt(t.contracts)||1)*100;
       const ls=_byT[t.ticker].lots;
@@ -3667,11 +3713,6 @@ function renderShares(){
         else{ls[_j].shares-=rem;rem=0;}
       }
       _byT[t.ticker].lots=ls.filter(l=>l.shares>0);
-    });
-    longs.filter(l=>l.ticker&&l.shares&&l.price&&!l.calledAway).forEach(l=>{
-      const k=l.ticker;
-      if(!_byT[k]) _byT[k]={ticker:k,lots:[]};
-      _byT[k].lots.push({shares:parseFloat(l.shares)||0,date:l.date||'',isLong:true});
     });
     // Subtract shares currently under open CCs
     trades.filter(t=>t.type==='C'&&!cd(t)&&t.ticker&&_byT[t.ticker]).forEach(t=>{
