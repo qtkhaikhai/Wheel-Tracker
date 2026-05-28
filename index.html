@@ -924,8 +924,21 @@ function _loadProfiles(){
 function _saveProfiles(){
   localStorage.setItem('wt_profiles',JSON.stringify(_profiles));
 }
-function _profileDriveFile(profile){
-  return 'wheel-data-'+profile.id+'.json';
+function _todayStr(){
+  // Returns local date as YYYY-MM-DD
+  const d=new Date();
+  const y=d.getFullYear();
+  const m=String(d.getMonth()+1).padStart(2,'0');
+  const dd=String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${dd}`;
+}
+function _profileDriveFile(profile,dateStr){
+  // wheel-data-<profileId>-YYYY-MM-DD.json
+  return 'wheel-data-'+profile.id+'-'+(dateStr||_todayStr())+'.json';
+}
+function _profileDriveFilePattern(profile){
+  // Prefix used to list all dated files for this profile
+  return 'wheel-data-'+profile.id+'-';
 }
 
 // ── Save profiles index to Drive so other computers can discover them ──
@@ -1024,7 +1037,7 @@ function selectProfile(id){
   const p=_profiles.find(p=>p.id===id);
   if(!p) return;
   _activeProfile=p;
-  WT_ACTIVE_DRIVE_FILE=_profileDriveFile(p);
+  WT_ACTIVE_DRIVE_FILE=_profileDriveFile(p,_todayStr());
   _driveFileId=null;
   // Update header badge
   const idx=_profiles.indexOf(p);
@@ -1165,15 +1178,61 @@ async function _ensureDriveFolder(){
 }
 
 async function _findDriveFile(folderId){
-  const q=encodeURIComponent(`name="${WT_ACTIVE_DRIVE_FILE}" and "${folderId}" in parents and trashed=false`);
+  // First look for today's file exactly
+  const todayName=WT_ACTIVE_DRIVE_FILE; // already set to today's dated filename
+  const q=encodeURIComponent(`name="${todayName}" and "${folderId}" in parents and trashed=false`);
   const list=await _driveReq('GET',`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`);
-  return(list.files&&list.files.length>0)?list.files[0].id:null;
+  if(list.files&&list.files.length>0) return list.files[0].id;
+  return null; // no file for today yet — caller will POST a new one
+}
+
+// Find the most recent dated file for the active profile (used at load time to
+// seed a new computer that has no file for today yet)
+async function _findMostRecentDriveFile(folderId){
+  if(!_activeProfile) return null;
+  const prefix=_profileDriveFilePattern(_activeProfile);
+  const q=encodeURIComponent(`name contains "${prefix}" and "${folderId}" in parents and trashed=false`);
+  const list=await _driveReq('GET',`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&orderBy=name desc`);
+  if(!list.files||!list.files.length) return null;
+  // Files are named wheel-data-<id>-YYYY-MM-DD.json — sort desc = most recent first
+  list.files.sort((a,b)=>b.name.localeCompare(a.name));
+  return list.files[0].id;
+}
+
+// Delete Drive files for the active profile that are more than 3 days old
+async function _pruneOldDriveFiles(folderId){
+  if(!_activeProfile) return;
+  try{
+    const prefix=_profileDriveFilePattern(_activeProfile);
+    const q=encodeURIComponent(`name contains "${prefix}" and "${folderId}" in parents and trashed=false`);
+    const list=await _driveReq('GET',`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`);
+    if(!list.files||!list.files.length) return;
+    const cutoff=new Date(); cutoff.setDate(cutoff.getDate()-3);
+    const cutoffStr=cutoff.toISOString().slice(0,10); // YYYY-MM-DD
+    const toDelete=list.files.filter(f=>{
+      // extract date portion: wheel-data-<id>-YYYY-MM-DD.json
+      const m=f.name.match(/(\d{4}-\d{2}-\d{2})\.json$/);
+      return m&&m[1]<cutoffStr;
+    });
+    for(const f of toDelete){
+      try{
+        await _driveReq('DELETE',`https://www.googleapis.com/drive/v3/files/${f.id}`);
+        console.log('Pruned old Drive file:',f.name);
+      }catch(e){ console.warn('Could not delete old Drive file:',f.name,e); }
+    }
+    if(toDelete.length) console.log(`Pruned ${toDelete.length} old Drive file(s)`);
+  }catch(e){ console.warn('_pruneOldDriveFiles failed:',e); }
 }
 
 function _buildPayload(){
+  // Include the active profile id and profiles list so a new computer can
+  // restore into the correct profile-scoped localStorage keys automatically.
+  const activeProfileId=_activeProfile?_activeProfile.id:null;
   return JSON.stringify({
-    _meta:{app:'wheel-tracker',version:2,saved:new Date().toISOString(),tradeCount:trades.length,longsCount:longs.length},
-    trades,longs,sharePrices,settings
+    _meta:{app:'wheel-tracker',version:2,saved:new Date().toISOString(),tradeCount:trades.length,longsCount:longs.length,profileId:activeProfileId},
+    trades,longs,sharePrices,settings,
+    _profileId:activeProfileId,
+    _profiles:_profiles
   },null,2);
 }
 
@@ -1224,13 +1283,31 @@ async function loadFromDrive(userTriggered){
   _setDriveStatus('saving','Connecting\u2026');
   try{
     const folderId=await _ensureDriveFolder();
-    const fileId=await _findDriveFile(folderId);
+    // Look for today's file first
+    let fileId=await _findDriveFile(folderId);
+    let usedFallback=false;
+    if(!fileId){
+      // No file for today yet — load the most recent previous day's file so we
+      // don't start blank on a new day / new computer
+      fileId=await _findMostRecentDriveFile(folderId);
+      usedFallback=!!fileId;
+    }
     if(fileId){
-      _driveFileId=fileId;
+      if(usedFallback){
+        // We loaded a previous day's file — don't cache its id as _driveFileId
+        // so the next save will POST a fresh file for today
+        _driveFileId=null;
+      } else {
+        _driveFileId=fileId;
+      }
       const raw=await _driveReq('GET',`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
       const text=typeof raw==='string'?raw:JSON.stringify(raw);
       const applied=_applyDriveData(JSON.parse(text));
-      if(applied) _setDriveStatus('synced','Synced \u2713');
+      if(applied){
+        _setDriveStatus('synced','Synced \u2713');
+        // Prune files older than 3 days (runs silently in the background)
+        _pruneOldDriveFiles(folderId).catch(()=>{});
+      }
     } else {
       _driveFileId=null;
       _setDriveStatus('synced',userTriggered?'No Drive file yet':'Ready \u2014 sign in to sync');
@@ -1245,6 +1322,24 @@ async function loadFromDrive(userTriggered){
 
 function _applyDriveData(d){
   if(!d||typeof d!=='object') return false;
+
+  // ── Restore profile identity from Drive payload ──────────────────────────
+  // If profiles or the active profile are missing on this computer (e.g. new
+  // machine), pull them from the payload and cache them locally so all
+  // subsequent localStorage reads/writes use the correct scoped keys.
+  if(Array.isArray(d._profiles)&&d._profiles.length){
+    const knownIds=new Set(_profiles.map(p=>p.id));
+    d._profiles.forEach(p=>{ if(!knownIds.has(p.id)) _profiles.push(p); });
+    _saveProfiles();
+  }
+  if(d._profileId&&!_activeProfile){
+    const matching=_profiles.find(p=>p.id===d._profileId);
+    if(matching){
+      _activeProfile=matching;
+      WT_ACTIVE_DRIVE_FILE=_profileDriveFile(matching,_todayStr());
+      localStorage.setItem('wt_active_profile',matching.id);
+    }
+  }
 
   const pid=_activeProfile?_activeProfile.id:'default';
   const localTrades=JSON.parse(localStorage.getItem('wt_trades_'+pid)||'[]');
@@ -1330,11 +1425,27 @@ async function _saveToDrive(){
     showToast('Drive save blocked: data appears empty or corrupt. Check your trades.', true);
     return;
   }
+  // Refresh the active Drive filename in case the day has rolled over since the
+  // session started (e.g. app left open past midnight)
+  if(_activeProfile){
+    const freshName=_profileDriveFile(_activeProfile,_todayStr());
+    if(WT_ACTIVE_DRIVE_FILE!==freshName){
+      // Day changed — force a new file to be created for today
+      WT_ACTIVE_DRIVE_FILE=freshName;
+      _driveFileId=null;
+    }
+  }
   _setDriveStatus('saving','Saving to Drive…');
   try{
     const payload=_buildPayload();
+    const folderId=_driveFolderId||await _ensureDriveFolder();
+    // If we don't have a file id for today, check Drive first to avoid duplicates
+    if(!_driveFileId&&folderId){
+      const existing=await _findDriveFile(folderId).catch(()=>null);
+      if(existing) _driveFileId=existing;
+    }
     const boundary='wt'+Date.now();
-    const meta=JSON.stringify({name:WT_ACTIVE_DRIVE_FILE,...(!_driveFileId&&_driveFolderId?{parents:[_driveFolderId]}:{})});
+    const meta=JSON.stringify({name:WT_ACTIVE_DRIVE_FILE,...(!_driveFileId&&folderId?{parents:[folderId]}:{})});
     const body='--'+boundary+'\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n'+meta+'\r\n--'+boundary+'\r\nContent-Type: application/json\r\n\r\n'+payload+'\r\n--'+boundary+'--';
     const method=_driveFileId?'PATCH':'POST';
     const url=_driveFileId
@@ -4225,12 +4336,15 @@ function showPanel(id,btn){
 }
 
 function exportBackup(){
+  const activeProfileId=_activeProfile?_activeProfile.id:null;
   const payload={
-    _meta:{app:'wheel-tracker',version:1,exported:new Date().toISOString()},
+    _meta:{app:'wheel-tracker',version:1,exported:new Date().toISOString(),profileId:activeProfileId},
     trades:trades,
     longs:longs,
     sharePrices:sharePrices,
     settings:settings,
+    _profileId:activeProfileId,
+    _profiles:_profiles,
   };
   const json=JSON.stringify(payload,null,2);
   const blob=new Blob([json],{type:'application/json'});
@@ -4254,6 +4368,22 @@ function onBackupFile(e){
       const n=data.trades.length, nL=Array.isArray(data.longs)?data.longs.length:0;
       if(!confirm(`Restore ${n} trade${n!==1?'s':''} and ${nL} long position${nL!==1?'s':''}? This will REPLACE everything currently in the tracker.`)) return;
       pushUndo('restore backup');
+
+      // Restore profile identity from backup so data lands in the right scoped keys
+      if(Array.isArray(data._profiles)&&data._profiles.length){
+        const knownIds=new Set(_profiles.map(p=>p.id));
+        data._profiles.forEach(p=>{ if(!knownIds.has(p.id)) _profiles.push(p); });
+        _saveProfiles();
+      }
+      if(data._profileId&&!_activeProfile){
+        const matching=_profiles.find(p=>p.id===data._profileId);
+        if(matching){
+          _activeProfile=matching;
+          WT_ACTIVE_DRIVE_FILE=_profileDriveFile(matching,_todayStr());
+          localStorage.setItem('wt_active_profile',matching.id);
+        }
+      }
+
       trades=data.trades;
       longs=Array.isArray(data.longs)?data.longs:[];
       sharePrices=(data.sharePrices&&typeof data.sharePrices==='object')?data.sharePrices:{};
