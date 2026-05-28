@@ -916,6 +916,49 @@ function _saveProfiles(){
 function _profileDriveFile(profile){
   return 'wheel-data-'+profile.id+'.json';
 }
+
+// ── Save profiles index to Drive so other computers can discover them ──
+async function _saveProfilesToDrive(){
+  if(!_accessToken||Date.now()>=_tokenExpiry-60000) return;
+  try{
+    const folderId=await _ensureDriveFolder();
+    const PFILE='wheel-tracker-profiles.json';
+    const q=encodeURIComponent(`name="${PFILE}" and "${folderId}" in parents and trashed=false`);
+    const list=await _driveReq('GET',`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`);
+    const existingId=(list.files&&list.files.length>0)?list.files[0].id:null;
+    const payload=JSON.stringify({profiles:_profiles,savedAt:new Date().toISOString()},null,2);
+    const boundary='wtp'+Date.now();
+    const meta=JSON.stringify({name:PFILE,...(!existingId?{parents:[folderId]}:{})});
+    const body='--'+boundary+'\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n'+meta+'\r\n--'+boundary+'\r\nContent-Type: application/json\r\n\r\n'+payload+'\r\n--'+boundary+'--';
+    const method=existingId?'PATCH':'POST';
+    const url=existingId
+      ?`https://www.googleapis.com/upload/drive/v3/files/${existingId}?uploadType=multipart`
+      :'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id';
+    await _driveReq(method,url,body,'multipart/related; boundary='+boundary);
+  }catch(e){ console.warn('_saveProfilesToDrive failed:',e); }
+}
+
+// ── Load profiles from Drive when local list is empty (new computer) ──
+async function _loadProfilesFromDrive(){
+  if(!_accessToken||Date.now()>=_tokenExpiry-60000) return false;
+  try{
+    const folderId=await _ensureDriveFolder();
+    const PFILE='wheel-tracker-profiles.json';
+    const q=encodeURIComponent(`name="${PFILE}" and "${folderId}" in parents and trashed=false`);
+    const list=await _driveReq('GET',`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`);
+    if(!list.files||!list.files.length) return false;
+    const raw=await _driveReq('GET',`https://www.googleapis.com/drive/v3/files/${list.files[0].id}?alt=media`);
+    const text=typeof raw==='string'?raw:JSON.stringify(raw);
+    const d=JSON.parse(text);
+    if(!Array.isArray(d.profiles)||!d.profiles.length) return false;
+    _profiles=d.profiles;
+    _saveProfiles(); // cache to localStorage on this computer
+    renderProfileSelector();
+    showToast('Profiles loaded from Drive ✓');
+    return true;
+  }catch(e){ console.warn('_loadProfilesFromDrive failed:',e); return false; }
+}
+
 function _initials(name){
   return name.trim().split(/\s+/).map(w=>w[0]).join('').toUpperCase().slice(0,2);
 }
@@ -960,6 +1003,7 @@ function saveNewProfile(){
   _saveProfiles();
   cancelAddProfile();
   renderProfileSelector();
+  _saveProfilesToDrive(); // sync new profile to Drive so other computers can see it
 }
 document.addEventListener('keydown',e=>{
   if(e.key==='Enter'&&document.getElementById('profile-new-form').style.display!=='none') saveNewProfile();
@@ -1067,7 +1111,7 @@ function _initTokenClient(){
       if(_tokenResolve){_tokenResolve({token:resp.access_token});_tokenResolve=null;}
       // Only auto-load from Drive if a profile is already selected
       else if(!_driveReady&&_activeProfile){ loadFromDrive(false); }
-      else if(!_driveReady){ _driveReady=true; }
+      else if(!_driveReady){ _driveReady=true; if(!_profiles.length) _loadProfilesFromDrive(); }
     }
   });
 }
