@@ -4759,16 +4759,27 @@ function parseSchawbSymbol(sym){
 
 function runSchwabImport(){
   pushUndo('Schwab import');
-  let added=0, skipped=0, stockAdded=0;
+  let added=0, updated=0, skipped=0, stockAdded=0, alreadyLogged=0;
   const warnings=[], skipReasons={};
 
-  // index existing trades for matching open→close
-  // key: ticker-expDate-strike-type → trade index
-  const openIndex={};
+  // ── Build an index of existing trades for deduplication ──────────────────
+  // Key: openDate-ticker-expDate-strike-type  (exact match = already in log)
+  const existingExact=new Set();
+  trades.forEach(t=>{
+    if(t.ticker&&t.openDate&&t.expDate&&t.strike&&t.type){
+      existingExact.add(`${t.openDate}|${t.ticker}|${t.expDate}|${t.strike}|${t.type}`);
+    }
+  });
+
+  // Open-trade index for matching closes/assignments/expirations.
+  // Uses an ARRAY per key to support multiple open contracts with the same
+  // ticker/exp/strike/type (e.g. sold the same put twice on different days).
+  const openIndex={}; // key → [tradeIdx, ...]
   trades.forEach((t,i)=>{
     if(!cd(t)&&t.ticker&&t.expDate&&t.strike&&t.type){
-      const k=`${t.ticker}-${t.expDate}-${t.strike}-${t.type}`;
-      openIndex[k]=i;
+      const k=`${t.ticker}|${t.expDate}|${t.strike}|${t.type}`;
+      if(!openIndex[k]) openIndex[k]=[];
+      openIndex[k].push(i);
     }
   });
 
@@ -4782,97 +4793,109 @@ function runSchwabImport(){
     const qty=Math.abs(parseInt(row[4])||1);
     const price=Math.abs(parseFloat((row[5]||'').replace(/[$,]/g,''))||0);
     const fees=Math.abs(parseFloat((row[6]||'').replace(/[$,]/g,''))||0);
-    const amount=parseFloat((row[7]||'').replace(/[$,]/g,''))||0;
 
     const tradeDate=parseSchwabDate(dateRaw);
     if(!tradeDate||!action){ skipped++; return; }
 
-    // ── Sell to Open → new trade
-    if(action==='Sell to Open'){
+    // ── Sell to Open / Buy to Open → new CSP or CC trade ─────────────────
+    if(action==='Sell to Open'||action==='Buy to Open'){
       const parsed=parseSchawbSymbol(symbol);
       if(!parsed){ skipReasons[`Row ${ri+1}: could not parse symbol "${symbol}"`]=1; skipped++; return; }
       const {ticker,expDate,strike,type}=parsed;
-      const premium=price; // per share
-      const k=`${ticker}-${expDate}-${strike}-${type}`;
-      // avoid duplicate if already exists
-      if(openIndex[k]!==undefined){
-        warnings.push(`${ticker} ${type} $${strike} exp ${expDate} already open — skipped duplicate`);
-        skipped++; return;
+
+      // Skip if this exact trade (same open date + contract) is already in the log
+      const exactKey=`${tradeDate}|${ticker}|${expDate}|${strike}|${type}`;
+      if(existingExact.has(exactKey)){
+        alreadyLogged++;
+        return;
       }
-      const t={id:uid()+ri,ticker,set:1,openDate:tradeDate,expDate,type,contracts:qty,strike,premium,openFees:fees,closeDate:null,costToClose:0,closeFees:0,assigned:'No',notes:''};
-      openIndex[k]=trades.length;
+
+      const t={id:uid()+ri,ticker,set:1,openDate:tradeDate,expDate,type,contracts:qty,
+               strike,premium:price,openFees:fees,closeDate:null,costToClose:0,closeFees:0,
+               assigned:'No',notes:''};
+      const k=`${ticker}|${expDate}|${strike}|${type}`;
+      if(!openIndex[k]) openIndex[k]=[];
+      openIndex[k].push(trades.length);
+      existingExact.add(exactKey);
       trades.push(t);
       added++;
     }
 
-    // ── Buy to Close → close an existing open trade
-    else if(action==='Buy to Close'){
+    // ── Buy to Close / Sell to Close → close the oldest matching open ────
+    else if(action==='Buy to Close'||action==='Sell to Close'){
       const parsed=parseSchawbSymbol(symbol);
       if(!parsed){ skipReasons[`Row ${ri+1}: could not parse symbol "${symbol}"`]=1; skipped++; return; }
       const {ticker,expDate,strike,type}=parsed;
-      const k=`${ticker}-${expDate}-${strike}-${type}`;
-      if(openIndex[k]!==undefined){
-        const t=trades[openIndex[k]];
+      const k=`${ticker}|${expDate}|${strike}|${type}`;
+      if(openIndex[k]&&openIndex[k].length>0){
+        const idx=openIndex[k].shift(); // FIFO: close oldest open first
+        const t=trades[idx];
         t.closeDate=tradeDate;
         t.costToClose=price;
         t.closeFees=fees;
-        delete openIndex[k];
-        added++; // counts as an update
+        if(openIndex[k].length===0) delete openIndex[k];
+        updated++;
       } else {
-        // no matching open — create a closed trade with unknown open date
-        const t={id:uid()+ri,ticker,set:1,openDate:'',expDate,type,contracts:qty,strike,premium:0,openFees:0,closeDate:tradeDate,costToClose:price,closeFees:fees,assigned:'No',notes:'Imported as close-only (no matching open)'};
+        // No matching open found — import as a closed-only trade
+        const t={id:uid()+ri,ticker,set:1,openDate:'',expDate,type,contracts:qty,
+                 strike,premium:0,openFees:0,closeDate:tradeDate,costToClose:price,
+                 closeFees:fees,assigned:'No',notes:'Close-only (no matching open in log)'};
         trades.push(t);
-        warnings.push(`${ticker} ${type} $${strike}: no matching open found, imported as closed trade`);
+        warnings.push(`${ticker} ${type} $${strike} exp ${expDate}: no matching open — imported as closed trade`);
         added++;
       }
     }
 
-    // ── Assigned → mark existing open as assigned
+    // ── Assigned → mark the oldest matching open as assigned ─────────────
     else if(action==='Assigned'){
       const parsed=parseSchawbSymbol(symbol);
       if(!parsed){ skipped++; return; }
       const {ticker,expDate,strike,type}=parsed;
-      const k=`${ticker}-${expDate}-${strike}-${type}`;
-      const assignDate=tradeDate;
-      if(openIndex[k]!==undefined){
-        const t=trades[openIndex[k]];
-        t.closeDate=assignDate;
+      const k=`${ticker}|${expDate}|${strike}|${type}`;
+      if(openIndex[k]&&openIndex[k].length>0){
+        const idx=openIndex[k].shift();
+        const t=trades[idx];
+        t.closeDate=tradeDate;
         t.assigned='Yes';
         t.costToClose=0;
-        delete openIndex[k];
+        t.closeFees=0;
+        if(openIndex[k].length===0) delete openIndex[k];
+        updated++;
       } else {
-        // create assigned trade with no open data — open date unknown
-        const t={id:uid()+ri,ticker,set:1,openDate:'',expDate,type,contracts:qty,strike,premium:0,openFees:0,closeDate:assignDate,costToClose:0,closeFees:0,assigned:'Yes',notes:'Assignment — no matching open found'};
+        const t={id:uid()+ri,ticker,set:1,openDate:'',expDate,type,contracts:qty,
+                 strike,premium:0,openFees:0,closeDate:tradeDate,costToClose:0,
+                 closeFees:0,assigned:'Yes',notes:'Assignment — no matching open in log'};
         trades.push(t);
-        warnings.push(`${ticker} ${type} $${strike}: assignment with no matching open — created placeholder`);
+        warnings.push(`${ticker} ${type} $${strike} exp ${expDate}: assignment with no matching open — placeholder created`);
+        added++;
       }
-      added++;
     }
 
-    // ── Expired → close as expired worthless
+    // ── Expired → close worthless ─────────────────────────────────────────
     else if(action==='Expired'){
       const parsed=parseSchawbSymbol(symbol);
       if(!parsed){ skipped++; return; }
       const {ticker,expDate,strike,type}=parsed;
-      const k=`${ticker}-${expDate}-${strike}-${type}`;
-      if(openIndex[k]!==undefined){
-        const t=trades[openIndex[k]];
+      const k=`${ticker}|${expDate}|${strike}|${type}`;
+      if(openIndex[k]&&openIndex[k].length>0){
+        const idx=openIndex[k].shift();
+        const t=trades[idx];
         t.closeDate=tradeDate;
         t.costToClose=0;
         t.closeFees=0;
         t.assigned='No';
-        delete openIndex[k];
-        added++;
+        if(openIndex[k].length===0) delete openIndex[k];
+        updated++;
       } else { skipped++; }
     }
 
-    // ── Buy (stock) → add to Long positions
+    // ── Buy (stock purchase) → add to Long positions ──────────────────────
     else if(action==='Buy'&&!symbol.includes(' ')){
       longs.push({id:uidLong()+ri,date:tradeDate,ticker:symbol.trim(),set:1,shares:qty,price,notes:'Schwab import'});
       stockAdded++;
     }
 
-    // ── Sell (stock) → add as negative shares to Long positions (reduces holding)
+    // ── Sell (stock sale) → negative entry in Long positions ─────────────
     else if((action==='Sell'||action==='Sell to Close')&&!symbol.includes(' ')){
       longs.push({id:uidLong()+ri,date:tradeDate,ticker:symbol.trim(),set:1,shares:-qty,price,notes:'Schwab sell'});
       stockAdded++;
@@ -4890,9 +4913,11 @@ function runSchwabImport(){
   const res=document.getElementById('imp-schwab-result');
   res.style.display='block';
   res.className='imp-info ok';
-  let html=`✓ Processed <b>${added}</b> option trade${added!==1?'s':''}`;
+  let html=`✓ <b>${added}</b> new trade${added!==1?'s':''} added`;
+  if(updated) html+=` · <b>${updated}</b> existing trade${updated!==1?'s':''} updated (close/assign/expire)`;
+  if(alreadyLogged) html+=` · <b>${alreadyLogged}</b> already in log (skipped)`;
   if(stockAdded) html+=` · <b>${stockAdded}</b> stock transaction${stockAdded!==1?'s':''} added to Long`;
-  if(skipped) html+=` · ${skipped} rows skipped`;
+  if(skipped) html+=` · ${skipped} other rows skipped`;
   if(warnings.length){
     html+=`<div style="margin-top:8px;font-size:10px;color:var(--amber);line-height:1.7;">`;
     warnings.forEach(w=>{ html+=`⚠ ${w}<br>`; });
@@ -4904,7 +4929,7 @@ function runSchwabImport(){
     html+='</div>';
   }
   res.innerHTML=html;
-  showToast(`Schwab: ${added} trades imported`);
+  showToast(`Schwab: ${added} added, ${updated} updated`);
   setTimeout(()=>{ closeImport(); resetImport(); },3500);
 }
 
