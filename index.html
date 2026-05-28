@@ -646,6 +646,17 @@ tbody td{padding:10px 13px;white-space:nowrap;}
             </div>
           </div>
         </div>
+        <div class="settings-row">
+          <div class="settings-label">
+            <div class="settings-label-title">Expiration Weeks</div>
+            <div class="settings-label-sub">Number of weeks shown in the Upcoming Expirations table on the Dashboard (All tab and individual week buttons).</div>
+          </div>
+          <div class="settings-control">
+            <div class="settings-input-wrap">
+              <input type="number" id="setting-exp-weeks" placeholder="8" min="1" max="52" step="1" style="width:80px;" oninput="saveSetting('expWeeks',this.value)"/>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="settings-section">
@@ -1390,7 +1401,7 @@ if(!settings.capital) settings.capital=75000;
 const DEFAULT_CAPITAL=75000;
 function getCapital(){ return parseFloat(settings.capital)||75000; }
 function saveSetting(key,val){
-  settings[key]=key==='capital'?parseFloat(val)||75000:val;
+  settings[key]=key==='capital'?parseFloat(val)||75000:key==='expWeeks'?Math.max(1,parseInt(val)||8):val;
   const _setpid=_activeProfile?_activeProfile.id:'default'; localStorage.setItem('wt_settings_'+_setpid,JSON.stringify(settings));
   _scheduleDriveSave();
   renderDerived();
@@ -1398,6 +1409,8 @@ function saveSetting(key,val){
 function renderSettings(){
   const el=document.getElementById('setting-capital');
   if(el) el.value=settings.capital||75000;
+  const elEW=document.getElementById('setting-exp-weeks');
+  if(elEW) elEW.value=settings.expWeeks||8;
   renderThemeSwitcher();
   // Update snapshot button label with timestamp if one exists
   const btn=document.getElementById('btn-restore-snapshot');
@@ -1525,7 +1538,8 @@ function toggleExpWeekRow(key){
 function getNext4Fridays(){
   const out=[]; const d=new Date(); d.setHours(0,0,0,0);
   while(d.getDay()!==5) d.setDate(d.getDate()+1);
-  for(let i=0;i<8;i++){ out.push(new Date(d)); d.setDate(d.getDate()+7); }
+  const n=Math.max(1,parseInt(settings&&settings.expWeeks)||8);
+  for(let i=0;i<n;i++){ out.push(new Date(d)); d.setDate(d.getDate()+7); }
   return out;
 }
 function fridayKeyOf(dateStr){
