@@ -697,7 +697,7 @@ tbody td{padding:10px 13px;white-space:nowrap;}
         <div class="settings-section-title">Data</div>
         <div class="settings-row">
           <div class="settings-label">
-            <div class="settings-label-title">Export All Data</div>
+            <div class="settings-label-title">Export All Data <span id="settings-profile-label" style="color:var(--green);font-size:10px;margin-left:6px;"></span></div>
             <div class="settings-label-sub">Download your trades and long positions as a CSV backup.</div>
           </div>
           <div class="settings-control">
@@ -1572,6 +1572,8 @@ function saveSetting(key,val){
   renderDerived();
 }
 function renderSettings(){
+  const _sl=document.getElementById('settings-profile-label');
+  if(_sl) _sl.textContent=_activeProfile?'('+_activeProfile.name+')':'';
   const el=document.getElementById('setting-capital');
   if(el) el.value=settings.capital||75000;
   const elEW=document.getElementById('setting-exp-weeks');
@@ -4405,7 +4407,8 @@ function exportBackup(){
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a');
   const stamp=new Date().toISOString().slice(0,10);
-  a.href=url; a.download='wheel-tracker-backup-'+stamp+'.json';
+  const _bpname=_activeProfile?_activeProfile.name.replace(/[^a-z0-9]/gi,'_'):'backup';
+  a.href=url; a.download='wheel-tracker-backup-'+_bpname+'-'+stamp+'.json';
   a.click();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
   showToast('Backup exported', false);
@@ -4420,7 +4423,14 @@ function onBackupFile(e){
         alert('That file does not look like a wheel-tracker backup.'); return;
       }
       const n=data.trades.length, nL=Array.isArray(data.longs)?data.longs.length:0;
-      if(!confirm(`Restore ${n} trade${n!==1?'s':''} and ${nL} long position${nL!==1?'s':''}? This will REPLACE everything currently in the tracker.`)) return;
+      const _curProf=_activeProfile?_activeProfile.name:'(none)';
+      let _profileWarn='';
+      if(data._profileId&&_activeProfile&&data._profileId!==_activeProfile.id){
+        const _srcProf=data._profiles&&data._profiles.find(p=>p.id===data._profileId);
+        const _srcName=_srcProf?_srcProf.name:data._profileId;
+        _profileWarn='\n\n⚠️ This backup is from "'+_srcName+'" but you are on "'+_curProf+'". Data will load into "'+_curProf+'".';
+      }
+      if(!confirm('Restore '+n+' trade'+(n!==1?'s':'')+' and '+nL+' long'+(nL!==1?'s':'')+' into profile "'+_curProf+'"? This will REPLACE current data.'+_profileWarn)) return;
       pushUndo('restore backup');
 
       // Restore profile identity from backup so data lands in the right scoped keys
@@ -4464,7 +4474,8 @@ function exportData(){
   const h=['open date','stock ticker','set','expiration','type','#k','strike','premium received','open fees','close date','assigned','paid to close','close fees','notes'];
   const rows=trades.map(t=>[t.openDate,t.ticker,t.set,t.expDate,t.type,t.contracts,t.strike,t.premium,t.openFees,t.closeDate||'',t.assigned,t.costToClose,t.closeFees,t.notes||'']);
   const csv=[h,...rows].map(r=>r.map(v=>JSON.stringify(v??'')).join(',')).join('\n');
-  const a=document.createElement('a'); a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv); a.download='wheel-trades-export.csv'; a.click();
+  const _epname=_activeProfile?_activeProfile.name.replace(/[^a-z0-9]/gi,'_'):'export';
+  const a=document.createElement('a'); a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv); a.download='wheel-trades-'+_epname+'-'+new Date().toISOString().slice(0,10)+'.csv'; a.click();
 }
 
 function clearLongs(){
