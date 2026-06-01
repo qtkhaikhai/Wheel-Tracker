@@ -1001,6 +1001,8 @@ function renderProfileSelector(){
     return;
   }
   document.getElementById('profile-sub').textContent='Who\'s trading today?';
+  document.getElementById('profile-add-area').style.display='block';
+  document.getElementById('profile-new-form').style.display='none';
   cards.innerHTML=_profiles.map((p,i)=>{
     const col=PROFILE_COLORS[i%PROFILE_COLORS.length];
     return `<div class="profile-card" onclick="selectProfile('${p.id}')">
@@ -1039,7 +1041,7 @@ document.addEventListener('keydown',e=>{
 function deleteProfile(id){
   const p=_profiles.find(p=>p.id===id);
   if(!p) return;
-  if(!confirm('Remove profile "'+p.name+'"? This only removes it from this computer's list — your Drive data is untouched.')) return;
+  if(!confirm('Remove profile "'+p.name+'"? This removes it from this computer only — Drive data is untouched.')) return;
   _profiles=_profiles.filter(p=>p.id!==id);
   _saveProfiles();
   renderProfileSelector();
