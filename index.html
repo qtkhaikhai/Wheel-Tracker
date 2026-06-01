@@ -584,7 +584,10 @@ tbody td{padding:10px 13px;white-space:nowrap;}
       <button class="fbtn" onclick="flt('put',this)">Puts</button>
       <button class="fbtn" onclick="flt('call',this)">Calls</button>
       <button class="fbtn" onclick="flt('assigned',this)">Assigned</button>
-      <input class="fsearch" type="text" placeholder="Search ticker…" oninput="logSearch=this.value.toUpperCase();renderLog()"/>
+      <span style="position:relative;display:inline-flex;align-items:center;">
+        <input class="fsearch" id="log-search-inp" type="text" placeholder="Search ticker…" oninput="logSearch=this.value.toUpperCase();renderLog();document.getElementById('log-search-clear').style.display=this.value?'flex':'none';"/>
+        <button id="log-search-clear" onclick="document.getElementById('log-search-inp').value='';logSearch='';renderLog();this.style.display='none';" style="display:none;position:absolute;right:6px;background:none;border:none;color:var(--text3);cursor:pointer;font-size:13px;line-height:1;padding:0;" title="Clear">✕</button>
+      </span>
 
     </div>
     <div class="fbar fbar-date">
