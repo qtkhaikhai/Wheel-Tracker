@@ -527,6 +527,9 @@ tbody td{padding:10px 13px;white-space:nowrap;}
     <div class="profile-cards" id="profile-cards"></div>
     <div id="profile-add-area">
       <button class="profile-add" onclick="showAddProfile()">+ Add profile</button>
+      <div id="profile-drive-load" style="display:none;margin-top:12px;">
+        <button class="btn-ghost" style="width:100%;" onclick="profileLoadFromDrive()">↓ Load profiles from Google Drive</button>
+      </div>
     </div>
     <div id="profile-new-form" style="display:none;margin-top:16px;">
       <div class="profile-edit-row">
@@ -992,12 +995,15 @@ function renderProfileSelector(){
   const cards=document.getElementById('profile-cards');
   if(!cards) return;
   if(!_profiles.length){
-    // First time — show a prompt to create profiles
-    document.getElementById('profile-sub').textContent='Create your first profile to get started';
+    document.getElementById('profile-sub').textContent='Create a profile or load from Google Drive';
     cards.innerHTML='';
+    const driveBtn=document.getElementById('profile-drive-load');
+    if(driveBtn) driveBtn.style.display='block';
     showAddProfile();
     return;
   }
+  const driveBtn2=document.getElementById('profile-drive-load');
+  if(driveBtn2) driveBtn2.style.display='none';
   document.getElementById('profile-sub').textContent='Who\'s trading today?';
   cards.innerHTML=_profiles.map((p,i)=>{
     const col=PROFILE_COLORS[i%PROFILE_COLORS.length];
@@ -1072,6 +1078,20 @@ function selectProfile(id){
   } else {
     _driveReady=true;
     _setDriveStatus('idle','Click ↑ Save to Drive');
+  }
+}
+
+async function profileLoadFromDrive(){
+  const driveBtn=document.getElementById('profile-drive-load');
+  if(driveBtn) driveBtn.innerHTML='<span style="color:var(--text3)">Signing in to Google…</span>';
+  try{
+    const t=await _getToken();
+    if(t.err){ showToast('Could not sign in: '+t.err); return; }
+    const ok=await _loadProfilesFromDrive();
+    if(!ok) showToast('No profiles found in Drive — create one below.');
+  }catch(e){ showToast('Error: '+String(e)); }
+  finally{
+    if(driveBtn) driveBtn.innerHTML='<button class="btn-ghost" style="width:100%;" onclick="profileLoadFromDrive()">↓ Load profiles from Google Drive</button>';
   }
 }
 
@@ -5019,6 +5039,9 @@ const _gsiInterval=setInterval(()=>{
   if(window.google&&window.google.accounts){
     clearInterval(_gsiInterval);
     _initTokenClient();
+    if(!_profiles.length&&_tokenClient){
+      _tokenClient.requestAccessToken({prompt:''});
+    }
   }
   if(_gsiCheckCount>30) clearInterval(_gsiInterval);
 },500);
