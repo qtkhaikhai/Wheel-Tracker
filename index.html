@@ -1385,6 +1385,16 @@ function _applyDriveData(d){
     }
   }
 
+  // ── Guard: block cross-profile data contamination ──
+  // If the Drive file belongs to a different profile than the one currently
+  // active, refuse to apply it — this prevents one profile's data leaking
+  // into another profile's session.
+  if(d._profileId && _activeProfile && d._profileId !== _activeProfile.id){
+    console.warn('Drive load blocked: file profileId',d._profileId,'does not match active profile',_activeProfile.id);
+    _setDriveStatus('idle','No Drive data yet for this profile');
+    return false;
+  }
+
   const pid=_activeProfile?_activeProfile.id:'default';
   const localTrades=JSON.parse(localStorage.getItem('wt_trades_'+pid)||'[]');
 
