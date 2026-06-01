@@ -528,8 +528,9 @@ tbody td{padding:10px 13px;white-space:nowrap;}
     <div id="profile-add-area">
       <button class="profile-add" onclick="showAddProfile()">+ Add profile</button>
     </div>
-    <div id="profile-drive-load" style="margin-top:12px;">
-      <button class="btn-ghost" style="width:100%;" onclick="profileLoadFromDrive()">↓ Load profiles from Google Drive</button>
+    <div id="profile-drive-load" style="margin-top:12px;display:flex;gap:8px;">
+      <button class="btn-ghost" style="flex:1;" onclick="profileSaveToDrive()" title="Push your current profiles to Drive so other computers can see them">↑ Save profiles to Drive</button>
+      <button class="btn-ghost" style="flex:1;" onclick="profileLoadFromDrive()">↓ Load from Drive</button>
     </div>
     <div id="profile-new-form" style="display:none;margin-top:16px;">
       <div class="profile-edit-row">
@@ -1088,6 +1089,19 @@ function selectProfile(id){
     _driveReady=true;
     _setDriveStatus('idle','Click ↑ Save to Drive');
   }
+}
+
+async function profileSaveToDrive(){
+  const btn=event.target;
+  const orig=btn.textContent;
+  btn.textContent='Saving…';btn.disabled=true;
+  try{
+    const t=await _getToken();
+    if(t.err){ showToast('Could not sign in: '+t.err); return; }
+    await _saveProfilesToDrive();
+    showToast('Profiles saved to Drive ✓');
+  }catch(e){ showToast('Error: '+String(e)); }
+  finally{ btn.textContent=orig;btn.disabled=false; }
 }
 
 async function profileLoadFromDrive(){
