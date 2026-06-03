@@ -744,6 +744,15 @@ tbody td{padding:10px 13px;white-space:nowrap;}
             <button class="settings-btn danger" onclick="clearLongs()">⌫ Clear Longs</button>
           </div>
         </div>
+        <div class="settings-row">
+          <div class="settings-label">
+            <div class="settings-label-title">Clear Withdrawals</div>
+            <div class="settings-label-sub">Permanently remove all withdrawal log entries.</div>
+          </div>
+          <div class="settings-control">
+            <button class="settings-btn danger" onclick="clearWithdrawals()">⌫ Clear Withdrawals</button>
+          </div>
+        </div>
       </div>
 
       <div class="settings-section">
@@ -1074,6 +1083,7 @@ function selectProfile(id){
   // Load local data for this profile first so app is immediately usable
   trades=JSON.parse(localStorage.getItem('wt_trades_'+p.id)||'[]');
   longs=JSON.parse(localStorage.getItem('wt_longs_'+p.id)||'[]');
+  withdrawals=JSON.parse(localStorage.getItem('wt_withdrawals_'+p.id)||'[]');
   sharePrices=JSON.parse(localStorage.getItem('wt_sp_'+p.id)||'{}');
   settings=JSON.parse(localStorage.getItem('wt_settings_'+p.id)||'{}');
   if(!settings.capital) settings.capital=75000;
@@ -1130,7 +1140,7 @@ function switchProfile(){
   _driveFileId=null;
   _driveFolderId=null;
   _driveReady=false;
-  trades=[];longs=[];sharePrices={};settings={capital:75000};
+  trades=[];longs=[];withdrawals=[];sharePrices={};settings={capital:75000};
   document.getElementById('header-profile-badge').style.display='none';
   document.getElementById('btn-switch-profile').style.display='none';
   document.getElementById('profile-overlay').style.display='flex';
@@ -1277,7 +1287,7 @@ function _buildPayload(){
   const activeProfileId=_activeProfile?_activeProfile.id:null;
   return JSON.stringify({
     _meta:{app:'wheel-tracker',version:2,saved:new Date().toISOString(),tradeCount:trades.length,longsCount:longs.length,profileId:activeProfileId},
-    trades,longs,sharePrices,settings,
+    trades,longs,withdrawals,sharePrices,settings,
     _profileId:activeProfileId,
     _profiles:_profiles
   },null,2);
@@ -1301,7 +1311,7 @@ function _backupLocally(){
   try{
     const pid=_activeProfile?_activeProfile.id:'default';
     const snapshot={
-      trades:[...trades],longs:[...longs],sharePrices:{...sharePrices},
+      trades:[...trades],longs:[...longs],withdrawals:[...withdrawals],sharePrices:{...sharePrices},
       savedAt:Date.now(),tradeCount:trades.length
     };
     localStorage.setItem('wt_backup_'+pid,JSON.stringify(snapshot));
@@ -1319,8 +1329,9 @@ function restoreLocalBackup(){
     if(!confirm(`Restore snapshot from ${when}?\nThis will replace your current ${trades.length} trade(s) with ${snap.trades.length} trade(s).`)) return;
     trades=snap.trades;
     if(Array.isArray(snap.longs)) longs=snap.longs;
+    if(Array.isArray(snap.withdrawals)) withdrawals=snap.withdrawals;
     if(snap.sharePrices&&typeof snap.sharePrices==='object') sharePrices=snap.sharePrices;
-    save(); saveLongs();
+    save(); saveLongs(); saveWithdrawals();
     _renderAll();
     showToast('Restored from local backup snapshot ✓');
   }catch(e){ alert('Failed to parse backup: '+e.message); }
@@ -1448,6 +1459,7 @@ function _applyDriveData(d){
     });
   }
   if(Array.isArray(d.longs)) longs=d.longs;
+  if(Array.isArray(d.withdrawals)) withdrawals=d.withdrawals;
   if(d.sharePrices&&typeof d.sharePrices==='object') sharePrices=d.sharePrices;
   if(d.settings&&typeof d.settings==='object') settings=Object.assign({},settings,d.settings);
   trades.forEach(t=>{
@@ -1469,6 +1481,7 @@ async function _saveToDrive(){
   const pid=_activeProfile?_activeProfile.id:'default';
   localStorage.setItem('wt_trades_'+pid,JSON.stringify(trades));
   localStorage.setItem('wt_longs_'+pid,JSON.stringify(longs));
+  localStorage.setItem('wt_withdrawals_'+pid,JSON.stringify(withdrawals));
   localStorage.setItem('wt_sp_'+pid,JSON.stringify(sharePrices));
   localStorage.setItem('wt_settings_'+pid,JSON.stringify(settings));
   if(!_accessToken||Date.now()>=_tokenExpiry-60000){
@@ -1658,6 +1671,19 @@ let longs=(()=>{
 })();
 function saveLongs(){ const _lpid=_activeProfile?_activeProfile.id:'default'; localStorage.setItem('wt_longs_'+_lpid,JSON.stringify(longs)); _scheduleDriveSave(); }
 function uidLong(){ return 'l'+Date.now()+Math.random(); }
+
+// withdrawals are profile-scoped (wt_withdrawals_<id>)
+let withdrawals=(()=>{
+  try{
+    let _pid='default';
+    try{const _ap=localStorage.getItem('wt_active_profile');if(_ap)_pid=_ap;}catch(e){}
+    const scoped=localStorage.getItem('wt_withdrawals_'+_pid);
+    if(scoped) return JSON.parse(scoped);
+    return [];
+  }catch(e){return [];}
+})();
+function saveWithdrawals(){ const _wpid=_activeProfile?_activeProfile.id:'default'; localStorage.setItem('wt_withdrawals_'+_wpid,JSON.stringify(withdrawals)); _scheduleDriveSave(); }
+function uidWithdrawal(){ return 'w'+Date.now()+Math.random(); }
 
 // SHARE PRICES (manual, per ticker)
 // sharePrices are profile-scoped (wt_sp_<id>); legacy key 'wt_share_prices' is kept as a one-time fallback
@@ -3995,14 +4021,17 @@ function renderLong(){
   const totalCost=activeLongs.reduce((s,l)=>s+(parseFloat(l.shares)||0)*(parseFloat(l.price)||0),0);
   const totalShares=activeLongs.reduce((s,l)=>s+(parseFloat(l.shares)||0),0);
   const calledAwayCount=longs.filter(l=>l.calledAway).length;
+  const totalWithdrawn=(withdrawals||[]).reduce((s,w)=>s+(parseFloat(w.amount)||0),0);
+  const netCost=totalCost-totalWithdrawn;
 
   // summary stats
   const stats=longs.length?`
-    <div class="stat-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:20px;">
+    <div class="stat-grid" style="grid-template-columns:repeat(5,1fr);margin-bottom:20px;">
       <div class="stat-card"><div class="stat-label">Active Positions</div><div class="stat-val">${activeLongs.length}${calledAwayCount?' <span style="font-size:12px;color:var(--text3);">+'+calledAwayCount+' closed</span>':''}</div></div>
       <div class="stat-card"><div class="stat-label">Total Shares</div><div class="stat-val">${totalShares.toLocaleString()}</div></div>
       <div class="stat-card"><div class="stat-label">Total Cost Basis</div><div class="stat-val r">${fm(totalCost)}</div></div>
-      <div class="stat-card"><div class="stat-label">Avg Price Paid</div><div class="stat-val">${totalShares?'$'+(totalCost/totalShares).toFixed(2):'—'}</div></div>
+      <div class="stat-card"><div class="stat-label">Total Withdrawn</div><div class="stat-val a">${fm(totalWithdrawn)}</div></div>
+      <div class="stat-card"><div class="stat-label">Net Account Amount</div><div class="stat-val ${netCost>=0?'r':'g'}">${fm(netCost)}</div></div>
     </div>`:'';
 
   // editable table rows — sorted by date desc
@@ -4032,6 +4061,22 @@ function renderLong(){
     </tr>`;
   }).join('');
 
+  // withdrawal log rows — sorted by date desc
+  const sortedWithdrawals=(withdrawals||[]).map((w,i)=>({w,i})).sort((a,b)=>{
+    const da=a.w.date?new Date(a.w.date+'T12:00:00'):new Date(0);
+    const db=b.w.date?new Date(b.w.date+'T12:00:00'):new Date(0);
+    return db-da;
+  });
+  const wRows=sortedWithdrawals.map(({w,i},rowNum)=>`<tr data-wi="${i}">
+    <td class="row-num">${rowNum+1}</td>
+    <td class="ecell narrow" data-wi="${i}" data-wkey="date" onclick="activateWithdrawalCell(this)"><span class="cv td">${fd(w.date)}</span></td>
+    <td class="ecell wide" data-wi="${i}" data-wkey="amount" onclick="activateWithdrawalCell(this)"><span class="cv tg" style="font-weight:600;">${w.amount!=null?fm(w.amount):''}</span></td>
+    <td class="ecell" style="min-width:240px;" data-wi="${i}" data-wkey="note" onclick="activateWithdrawalCell(this)"><span class="cv td">${w.note||''}</span></td>
+    <td style="text-align:center;background:var(--surface);border-bottom:1px solid var(--border);">
+      <button onclick="deleteWithdrawal(${i})" style="background:none;border:none;color:var(--text3);cursor:pointer;padding:4px 8px;border-radius:4px;font-size:13px;" onmouseover="this.style.color='var(--red)'" onmouseout="this.style.color='var(--text3)'">✕</button>
+    </td>
+  </tr>`).join('');
+
   container.innerHTML=`
     ${stats}
     <div class="sec-hdr">
@@ -4047,7 +4092,27 @@ function renderLong(){
         <tbody>${rows}</tbody>
       </table>
       <button class="add-row-btn" onclick="addLong()">＋ Add position</button>
-    </div>`;
+    </div>
+
+    <div class="sec-hdr" style="margin-top:28px;">
+      <span class="sec-title">Withdrawal Log</span>
+      <span class="td" style="font-size:11px;">Withdrawals are subtracted from the total account amount</span>
+    </div>
+    <div class="log-outer">
+      <table class="log-table">
+        <thead><tr>
+          <th class="col-row">#</th>
+          <th>Date</th>
+          <th>Amount</th>
+          <th>Description / Note</th>
+          <th style="min-width:36px;"></th>
+        </tr></thead>
+        <tbody>${wRows}</tbody>
+      </table>
+      <button class="add-row-btn" onclick="addWithdrawal()">＋ Add withdrawal</button>
+    </div>
+    ${totalWithdrawn>0?`<div style="text-align:right;font-size:11px;color:var(--text3);margin-top:6px;">Total withdrawn: <span style="color:var(--amber);font-weight:600;">${fm(totalWithdrawn)}</span> &nbsp;·&nbsp; Net account: <span style="color:var(--green);font-weight:600;">${fm(netCost)}</span></div>`:''}
+  `;
 }
 
 // Long cell editing (reuses same pattern as log)
@@ -4114,6 +4179,68 @@ function toggleLongCalledAway(i){
   renderLong();
   renderShares();
 }
+
+// ── WITHDRAWAL LOG ────────────────────────────────────────────
+let activeWithdrawalCell=null;
+
+function activateWithdrawalCell(td){
+  if(activeWithdrawalCell===td) return;
+  deactivateWithdrawalCell();
+  activeWithdrawalCell=td;
+  td.classList.add('focused');
+  const wi=parseInt(td.dataset.wi), key=td.dataset.wkey;
+  const w=withdrawals[wi];
+  td.querySelector('.cv').style.display='none';
+  let el;
+  if(key==='date'){ el=document.createElement('input'); el.type='date'; el.value=w[key]||''; }
+  else if(key==='amount'){ el=document.createElement('input'); el.type='number'; el.step='0.01'; el.min='0'; el.value=w[key]??''; }
+  else { el=document.createElement('input'); el.type='text'; el.value=w[key]||''; }
+  el.addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key==='Tab'){e.preventDefault();commitWithdrawalCell(wi,key,el.value);deactivateWithdrawalCell();} if(e.key==='Escape') deactivateWithdrawalCell(); });
+  el.addEventListener('blur',()=>{ commitWithdrawalCell(wi,key,el.value); deactivateWithdrawalCell(); });
+  td.appendChild(el); el.focus();
+  if(el.type==='text'||el.type==='number') el.select();
+}
+
+function deactivateWithdrawalCell(){
+  if(!activeWithdrawalCell) return;
+  activeWithdrawalCell.classList.remove('focused');
+  const inp=activeWithdrawalCell.querySelector('input');
+  if(inp) inp.remove();
+  const cv=activeWithdrawalCell.querySelector('.cv');
+  if(cv) cv.style.display='';
+  activeWithdrawalCell=null;
+}
+
+function commitWithdrawalCell(wi,key,rawVal){
+  let val=rawVal;
+  if(key==='amount') val=rawVal===''?null:parseFloat(rawVal);
+  if(withdrawals[wi][key]===val) return;
+  withdrawals[wi][key]=val;
+  saveWithdrawals();
+  setTimeout(()=>renderLong(),10);
+}
+
+function addWithdrawal(){
+  withdrawals.push({id:uidWithdrawal(),date:today(),amount:null,note:''});
+  saveWithdrawals();
+  renderLong();
+  // scroll to bottom of withdrawal table
+  const outers=document.querySelectorAll('#long-content .log-outer');
+  if(outers.length>=2) outers[outers.length-1].scrollTop=outers[outers.length-1].scrollHeight;
+}
+
+function deleteWithdrawal(i){
+  if(!confirm('Delete this withdrawal entry?')) return;
+  withdrawals.splice(i,1);
+  saveWithdrawals();
+  renderLong();
+}
+
+// click outside withdrawal table deactivates
+document.addEventListener('click',e=>{
+  if(!activeWithdrawalCell) return;
+  if(!activeWithdrawalCell.contains(e.target)) deactivateWithdrawalCell();
+});
 
 // click outside long table
 document.addEventListener('click',e=>{
@@ -4400,6 +4527,7 @@ function exportBackup(){
     _meta:{app:'wheel-tracker',version:1,exported:new Date().toISOString(),profileId:activeProfileId},
     trades:trades,
     longs:longs,
+    withdrawals:withdrawals,
     sharePrices:sharePrices,
     settings:settings,
     _profileId:activeProfileId,
@@ -4453,13 +4581,14 @@ function onBackupFile(e){
 
       trades=data.trades;
       longs=Array.isArray(data.longs)?data.longs:[];
+      withdrawals=Array.isArray(data.withdrawals)?data.withdrawals:[];
       sharePrices=(data.sharePrices&&typeof data.sharePrices==='object')?data.sharePrices:{};
       if(data.settings&&typeof data.settings==='object'){
         settings=Object.assign({}, settings, data.settings);
         const _rspid=_activeProfile?_activeProfile.id:'default';
         localStorage.setItem('wt_settings_'+_rspid,JSON.stringify(settings));
       }
-      save(); saveLongs(); saveSharePrices();
+      save(); saveLongs(); saveWithdrawals(); saveSharePrices();
       try { renderLog(); } catch(err){ console.error(err); }
       try { renderDerived(); } catch(err){ console.error(err); }
       try { renderSummary(); } catch(err){ console.error(err); }
@@ -4490,11 +4619,19 @@ function clearLongs(){
   showToast('Long positions cleared', false);
 }
 
+function clearWithdrawals(){
+  if(!confirm('Clear all withdrawal entries?')) return;
+  withdrawals=[];
+  saveWithdrawals();
+  renderLong();
+  showToast('Withdrawals cleared', false);
+}
+
 function resetEverything(){
   if(!confirm('This will permanently delete ALL data — trades, long positions, share prices, and settings — and reload the app fresh.\n\nAre you sure?')) return;
   if(!confirm('Last chance: click OK to wipe everything and start fresh.')) return;
   localStorage.clear();
-  trades=[]; longs=[]; sharePrices={}; settings={capital:75000};
+  trades=[]; longs=[]; withdrawals=[]; sharePrices={}; settings={capital:75000};
   editingRidx=null; editDraft={};
   location.reload();
 }
