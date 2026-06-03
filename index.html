@@ -1909,9 +1909,10 @@ function _renderSummaryInner(container){
   });
   const assignedCost=Object.values(inv).reduce((s,o)=>s+o.cost,0);
   const longCost=longs.filter(l=>!l.calledAway).reduce((s,l)=>s+(parseFloat(l.shares)||0)*(parseFloat(l.price)||0),0);
+  const totalWithdrawnSummary=(withdrawals||[]).reduce((s,w)=>s+(parseFloat(w.amount)||0),0);
   const committed=cspCollat+assignedCost+longCost;
-  // cashOnHand matches Dashboard: (capital + realized) - committed
-  const cashOnHand=(cap+closedAll.reduce((s,t)=>s+(calcPL(t)||0),0))-committed;
+  // cashOnHand matches Dashboard: (capital + realized) - committed - withdrawals
+  const cashOnHand=(cap+closedAll.reduce((s,t)=>s+(calcPL(t)||0),0))-committed-totalWithdrawnSummary;
   const buyingPower=Math.max(0,cap-committed);
   const bpUtil=cap>0?committed/cap*100:0;
   const cashSecuredPct=cap>0?cspCollat/cap*100:0;
@@ -1927,7 +1928,7 @@ function _renderSummaryInner(container){
       unrealizedShares+=(parseFloat(cp)-avgBasis)*inv[tk].shares;
     }
   });
-  const portValue=cap+totalRealizedAllTime+unrealizedShares;
+  const portValue=cap+totalRealizedAllTime+unrealizedShares-totalWithdrawnSummary;
   // monthly income = closed last 30d
   const last30Cutoff=new Date(Date.now()-30*86400e3);
   const monthlyIncome=closedAll.filter(t=>{const c=cd(t); return c&&new Date(c)>=last30Cutoff;}).reduce((s,t)=>s+(calcPL(t)||0),0);
@@ -2912,7 +2913,7 @@ function clearAll(){
 function renderDashboard(){
   // Dashboard tab was removed - guard against missing DOM
   if(!document.getElementById('dash-stat-grid')) return;
-  const s=getStats(), total=getCapital()+s.realized;
+  const s=getStats(), totalWithdrawnDash=(withdrawals||[]).reduce((s,w)=>s+(parseFloat(w.amount)||0),0), total=getCapital()+s.realized-totalWithdrawnDash;
 
   // Cash secured puts: collateral locked = strike × contracts × 100 (open puts only)
   const openPuts=trades.filter(t=>!cd(t)&&t.type==='P');
@@ -4487,7 +4488,8 @@ function renderPnL(){
 // ═══════════════════════════════════════
 function renderBottomBar(){
   const s=getStats();
-  document.getElementById('bb-port').textContent=fm(getCapital()+s.realized);
+  const totalWithdrawnBB=(withdrawals||[]).reduce((s,w)=>s+(parseFloat(w.amount)||0),0);
+  document.getElementById('bb-port').textContent=fm(getCapital()+s.realized-totalWithdrawnBB);
   document.getElementById('bb-real').textContent=fm(s.realized);
   document.getElementById('bb-open').textContent=s.open.length;
   document.getElementById('bb-wr').textContent=s.closed.length?Math.round(s.wins/s.closed.length*100)+'%':'—';
