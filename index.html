@@ -5687,7 +5687,7 @@ function _smigApply(){
 // ═══════════════════════════════════════
 
 // ── CSS injected once ─────────────────
-(function injectReportsCSS(){
+function injectReportsCSS(){
   if(document.getElementById('reports-css')) return;
   const s=document.createElement('style');
   s.id='reports-css';
@@ -5769,7 +5769,7 @@ function _smigApply(){
   .rpt-empty { padding:48px; text-align:center; color:var(--text3); font-size:13px; }
   `;
   document.head.appendChild(s);
-})();
+}
 
 // ── State ─────────────────────────────
 let rptMonth='', rptRecap='';
