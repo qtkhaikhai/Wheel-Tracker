@@ -5777,15 +5777,24 @@ let rptMonth='', rptRecap='';
 // ── Month options helper ──────────────
 function _rptMonthOptions(){
   const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
+  // collect all months that appear in trades (by close date or open date)
+  const seen=new Set();
+  trades.forEach(t=>{
+    [t.openDate, cd(t)].forEach(d=>{
+      if(d){ const dt=new Date(d+'T12:00:00'); seen.add(dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')); }
+    });
+  });
+  // also add last 3 months so there are always options even with no data
   const now=new Date();
-  const opts=[];
-  for(let i=11;i>=0;i--){
-    const d=new Date(now.getFullYear(), now.getMonth()-i, 1);
-    const val=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
-    const lbl=MONTHS[d.getMonth()]+' '+d.getFullYear();
-    opts.push({val,lbl});
+  for(let i=0;i<3;i++){
+    const d=new Date(now.getFullYear(),now.getMonth()-i,1);
+    seen.add(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'));
   }
-  return opts.reverse();
+  const sorted=[...seen].sort().reverse(); // newest first
+  return sorted.map(val=>{
+    const [y,m]=val.split('-').map(Number);
+    return {val, lbl:MONTHS[m-1]+' '+y};
+  });
 }
 
 // ── Firm / client info from settings ─
@@ -5864,12 +5873,13 @@ function _rptLogoSVG(size=54){
 // ── Build preview HTML ────────────────
 function _rptBuildPreview(monthVal, recap){
   const data=_rptData(monthVal);
+  if(!data) return '<div class="rpt-empty">No data available</div>';
   const MONTHS_FULL=['January','February','March','April','May','June','July','August','September','October','November','December'];
   const [yr,mo]=monthVal.split('-').map(Number);
   const monthLabel=MONTHS_FULL[mo-1]+' '+yr;
-  const fm2=v=>{ if(v==null||isNaN(v)) return '—'; const a=Math.abs(v); const s=a>=1000?'$'+(a/1000).toFixed(2)+'k':'$'+a.toFixed(2); return v<0?'-'+s:s; };
-  const fp2=v=>v==null?'—':v.toFixed(1)+'%';
-  const fd2=d=>{ if(!d) return '—'; const dt=new Date(d+'T12:00:00'); return `${dt.getMonth()+1}/${dt.getDate()}/${String(dt.getFullYear()).slice(2)}`; };
+  const fm2=v=>{ try{ if(v==null||v===undefined||isNaN(v)) return '—'; const a=Math.abs(v); const s=a>=1000?'$'+(a/1000).toFixed(2)+'k':'$'+a.toFixed(2); return v<0?'-'+s:s; } catch(e){ return '—'; } };
+  const fp2=v=>{ try{ return (v==null||v===undefined||isNaN(v))?'—':Number(v).toFixed(1)+'%'; } catch(e){ return '—'; } };
+  const fd2=d=>{ if(!d) return '—'; try{ const dt=new Date(d+'T12:00:00'); return `${dt.getMonth()+1}/${dt.getDate()}/${String(dt.getFullYear()).slice(2)}`; } catch(e){ return '—'; } };
 
   // bar chart
   const maxB=data.maxBar||1;
@@ -6221,20 +6231,40 @@ function rptSaveClientInfo(){
 
 // ── Refresh live preview ──────────────
 function rptRefreshPreview(){
-  const monthVal=document.getElementById('rpt-month-sel')&&document.getElementById('rpt-month-sel').value;
-  const recap=document.getElementById('rpt-recap-inp')&&document.getElementById('rpt-recap-inp').value||'';
+  const selEl=document.getElementById('rpt-month-sel');
+  const recapEl=document.getElementById('rpt-recap-inp');
   const wrap=document.getElementById('rpt-preview-inner');
-  if(!wrap) return;
-  if(!monthVal){ wrap.innerHTML='<div class="rpt-empty">Select a month to preview the report</div>'; return; }
-  wrap.innerHTML=_rptBuildPreview(monthVal, recap);
+  if(!wrap||!selEl) return;
+  const monthVal=selEl.value;
+  const recap=(recapEl&&recapEl.value)||'';
+  if(!monthVal){
+    wrap.innerHTML='<div class="rpt-empty">Select a month to preview the report</div>';
+    return;
+  }
+  try {
+    wrap.innerHTML=_rptBuildPreview(monthVal, recap);
+  } catch(e) {
+    console.error('rptRefreshPreview error:', e);
+    wrap.innerHTML='<div class="rpt-empty" style="color:var(--red);">Preview error — check console</div>';
+  }
 }
 
 // ── Render Reports Tab ────────────────
 function renderReports(){
   injectReportsCSS();
   const months=_rptMonthOptions();
-  const lastMonth=months[0].val;
-  const moOptions=months.map(m=>`<option value="${m.val}">${m.lbl}</option>`).join('');
+  // pick the most recent month with at least one closed trade, else just the first option
+  let defaultMonth=months[0]&&months[0].val||'';
+  for(const m of months){
+    const [yr,mo]=m.val.split('-').map(Number);
+    const hasClosed=trades.some(t=>{
+      const d=cd(t); if(!d) return false;
+      const dt=new Date(d+'T12:00:00');
+      return dt.getFullYear()===yr&&dt.getMonth()+1===mo;
+    });
+    if(hasClosed){ defaultMonth=m.val; break; }
+  }
+  const moOptions=months.map(m=>`<option value="${m.val}"${m.val===defaultMonth?' selected':''}>${m.lbl}</option>`).join('');
 
   document.getElementById('reports-content').innerHTML=`
   <div class="rpt-sidebar">
@@ -6275,9 +6305,7 @@ function renderReports(){
     <div class="rpt-preview-body"><div id="rpt-preview-inner"><div class="rpt-empty">Select a month to preview the report</div></div></div>
   </div>`;
 
-  // default to last month
-  const sel=document.getElementById('rpt-month-sel');
-  if(sel) sel.value=lastMonth;
+  // trigger initial preview now that DOM is ready
   rptRefreshPreview();
 }
 
