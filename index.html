@@ -493,8 +493,9 @@ tbody td{padding:10px 13px;white-space:nowrap;}
 .profile-badge-dot{width:8px;height:8px;border-radius:50%;}
 
 /* REPORTS TAB */
-  #panel-reports { min-height:100vh; } #reports-content { display:grid; grid-template-columns:300px 1fr; gap:20px; align-items:start; }
-  .rpt-sidebar { display:flex; flex-direction:column; gap:14px; }
+  #reports-content { display:flex; flex-direction:row; gap:20px; align-items:flex-start; width:100%; }
+  .rpt-sidebar { display:flex; flex-direction:column; gap:14px; width:300px; flex-shrink:0; }
+  .rpt-preview-wrap { flex:1; min-width:0; }
   .rpt-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
   .rpt-card-hdr { background:var(--surface2); padding:10px 16px; font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--text3); font-weight:500; border-bottom:1px solid var(--border); }
   .rpt-field { padding:10px 16px; border-bottom:1px solid var(--border); }
@@ -511,7 +512,7 @@ tbody td{padding:10px 13px;white-space:nowrap;}
   .rpt-btn-primary:hover { background:#00ffb0; }
   .rpt-btn-ghost { flex:1; background:none; border:1px solid var(--border2); color:var(--text2); font-family:var(--mono); font-size:11px; padding:9px 14px; border-radius:7px; cursor:pointer; transition:all .15s; }
   .rpt-btn-ghost:hover { border-color:var(--green); color:var(--green); }
-  .rpt-preview-wrap { background:var(--surface); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+  .rpt-preview-wrap { background:var(--surface); border:1px solid var(--border); border-radius:10px; overflow:hidden; flex:1; min-width:0; }
   .rpt-preview-hdr { background:var(--surface2); padding:10px 16px; font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--text3); border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
   .rpt-preview-body { padding:0; }
   .rpt-pdf-page { background:#ffffff; color:#1a1810; font-family:Georgia,serif; padding:0; }
