@@ -1643,6 +1643,12 @@ function _renderAll(){
   try{renderSettings();}catch(e){console.error('renderSettings:',e);}
   try{renderHistory();}catch(e){console.error('renderHistory:',e);}
   try{renderSummary();}catch(e){console.error('renderSummary:',e);}
+  // Re-render Reports if it is the active panel
+  try{
+    if(document.getElementById('panel-reports')&&document.getElementById('panel-reports').classList.contains('active')){
+      renderReports();
+    }
+  }catch(e){console.error('renderReports:',e);}
 }
 
 
@@ -6261,8 +6267,9 @@ function renderReports(){
   }
   const moOptions=months.map(m=>`<option value="${m.val}"${m.val===defaultMonth?' selected':''}>${m.lbl}</option>`).join('');
 
+  document.getElementById('reports-content').style.cssText='display:flex;flex-direction:row;gap:20px;align-items:flex-start;width:100%;';
   document.getElementById('reports-content').innerHTML=`
-  <div class="rpt-sidebar">
+  <div class="rpt-sidebar" style="display:flex;flex-direction:column;gap:14px;width:300px;flex-shrink:0;">
     <div class="rpt-card">
       <div class="rpt-card-hdr">Firm &amp; Client Info</div>
       <div class="rpt-field"><div class="rpt-label">Firm Name</div><input class="rpt-input" id="rpt-firm-name" value="${_rptFirmName()}" placeholder="RACE Investments" oninput="rptRefreshPreview()"/></div>
@@ -6292,7 +6299,7 @@ function renderReports(){
       <div style="padding:0 16px 12px;font-size:10px;color:var(--text3);line-height:1.5;">Download opens as HTML — open in your browser and use <strong>Print → Save as PDF</strong> for a perfect PDF.</div>
     </div>
   </div>
-  <div class="rpt-preview-wrap">
+  <div class="rpt-preview-wrap" style="flex:1;min-width:0;background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;">
     <div class="rpt-preview-hdr">
       <span>Live Preview</span>
       <span style="font-size:10px;color:var(--text3);">Updates as you type</span>
