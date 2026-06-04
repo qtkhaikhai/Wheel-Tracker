@@ -6299,8 +6299,11 @@ function renderReports(){
     <div class="rpt-preview-body"><div id="rpt-preview-inner"><div class="rpt-empty">Select a month to preview the report</div></div></div>
   </div>`;
 
-  // defer preview render so DOM is ready after innerHTML is set
-  setTimeout(rptRefreshPreview, 0);
+  // Inline the preview directly - no deferred calls needed
+  const previewEl = document.getElementById('rpt-preview-inner');
+  if(previewEl && defaultMonth){
+    try { previewEl.innerHTML = _rptBuildPreview(defaultMonth, ''); } catch(e){ console.error('preview error', e); }
+  }
 }
 
 </script>
