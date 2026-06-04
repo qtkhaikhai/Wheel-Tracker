@@ -552,6 +552,7 @@ tbody td{padding:10px 13px;white-space:nowrap;}
     <button onclick="showPanel('long',this)">Long</button>
     <button onclick="showPanel('pnl',this)">P&amp;L</button>
     <button onclick="showPanel('settings',this)">Settings</button>
+    <button onclick="showPanel('reports',this)">Reports</button>
   </nav>
   <div class="hdr-right">
     <button class="btn-ghost" onclick="switchProfile()" title="Switch profile" id="btn-switch-profile" style="display:none;">⇄ Switch</button>
@@ -796,6 +797,11 @@ tbody td{padding:10px 13px;white-space:nowrap;}
       </div>
 
     </div>
+  </div>
+
+  <!-- REPORTS -->
+  <div class="panel" id="panel-reports">
+    <div id="reports-content"></div>
   </div>
 </main>
 
@@ -4532,6 +4538,7 @@ function showPanel(id,btn){
   btn.classList.add('active');
   if(id==='settings') renderSettings();
   else if(id==='summary'){ renderSummary(); }
+  else if(id==='reports') renderReports();
   else if(id!=='log') renderDerived();
 }
 
@@ -5673,6 +5680,606 @@ function _smigApply(){
 }
 
 
+
+
+// ═══════════════════════════════════════
+//  REPORTS TAB
+// ═══════════════════════════════════════
+
+// ── CSS injected once ─────────────────
+(function injectReportsCSS(){
+  if(document.getElementById('reports-css')) return;
+  const s=document.createElement('style');
+  s.id='reports-css';
+  s.textContent=`
+  #reports-content { display:grid; grid-template-columns:300px 1fr; gap:20px; align-items:start; }
+  .rpt-sidebar { display:flex; flex-direction:column; gap:14px; }
+  .rpt-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+  .rpt-card-hdr { background:var(--surface2); padding:10px 16px; font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--text3); font-weight:500; border-bottom:1px solid var(--border); }
+  .rpt-field { padding:10px 16px; border-bottom:1px solid var(--border); }
+  .rpt-field:last-child { border-bottom:none; }
+  .rpt-label { font-size:9px; letter-spacing:.08em; text-transform:uppercase; color:var(--text3); margin-bottom:4px; font-weight:500; }
+  .rpt-input { width:100%; background:var(--surface2); border:1px solid var(--border); border-radius:6px; color:var(--text); font-family:var(--mono); font-size:12px; padding:6px 10px; outline:none; transition:border-color .15s; }
+  .rpt-input:focus { border-color:var(--green); }
+  .rpt-textarea { width:100%; background:var(--surface2); border:1px solid var(--border); border-radius:6px; color:var(--text); font-family:var(--mono); font-size:11px; padding:8px 10px; outline:none; resize:vertical; min-height:90px; line-height:1.5; transition:border-color .15s; }
+  .rpt-textarea:focus { border-color:var(--green); }
+  .rpt-select { width:100%; background:var(--surface2); border:1px solid var(--border); border-radius:6px; color:var(--text); font-family:var(--mono); font-size:12px; padding:6px 10px; outline:none; cursor:pointer; }
+  .rpt-select:focus { border-color:var(--green); }
+  .rpt-btn-row { padding:12px 16px; display:flex; gap:8px; }
+  .rpt-btn-primary { flex:1; background:var(--green); color:#000; border:none; font-family:var(--mono); font-size:11px; font-weight:600; padding:9px 14px; border-radius:7px; cursor:pointer; transition:background .15s; }
+  .rpt-btn-primary:hover { background:#00ffb0; }
+  .rpt-btn-ghost { flex:1; background:none; border:1px solid var(--border2); color:var(--text2); font-family:var(--mono); font-size:11px; padding:9px 14px; border-radius:7px; cursor:pointer; transition:all .15s; }
+  .rpt-btn-ghost:hover { border-color:var(--green); color:var(--green); }
+  .rpt-preview-wrap { background:var(--surface); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+  .rpt-preview-hdr { background:var(--surface2); padding:10px 16px; font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--text3); border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
+  .rpt-preview-body { padding:0; }
+  .rpt-pdf-page { background:#ffffff; color:#1a1810; font-family:Georgia,serif; padding:0; }
+  .rpt-pdf-hdr { background:#ffffff; border-left:5px solid #1e3a5f; padding:20px 24px; display:flex; align-items:center; gap:16px; }
+  .rpt-pdf-firm-name { font-size:18px; font-weight:700; color:#1a1810; letter-spacing:-.3px; }
+  .rpt-pdf-slogan { font-size:10px; color:#a89880; font-style:italic; margin-top:3px; }
+  .rpt-pdf-underline { width:32px; height:2px; background:#1e3a5f; border-radius:2px; margin-top:7px; }
+  .rpt-pdf-report-lbl { font-size:9px; text-transform:uppercase; letter-spacing:.1em; color:#a89880; font-weight:700; font-family:Arial,sans-serif; text-align:right; }
+  .rpt-pdf-report-mo { font-size:17px; font-weight:700; color:#1a1810; margin-top:2px; font-family:Arial,sans-serif; text-align:right; }
+  .rpt-pdf-client-bar { background:#f5f0ea; border-top:1px solid #dddad4; border-bottom:1px solid #dddad4; padding:10px 24px; display:flex; gap:0; }
+  .rpt-pdf-cf { display:flex; flex-direction:column; gap:2px; flex:1; }
+  .rpt-pdf-cl { font-size:8px; text-transform:uppercase; letter-spacing:.09em; color:#a89880; font-weight:700; font-family:Arial,sans-serif; }
+  .rpt-pdf-cv { font-size:11px; color:#1a1810; font-weight:600; font-family:Arial,sans-serif; }
+  .rpt-pdf-body { padding:18px 24px; }
+  .rpt-sec-title { font-size:8px; text-transform:uppercase; letter-spacing:.12em; color:#1e3a5f; font-weight:700; font-family:Arial,sans-serif; border-bottom:1.5px solid #1e3a5f; padding-bottom:4px; margin-bottom:10px; margin-top:18px; }
+  .rpt-sec-title:first-child { margin-top:0; }
+  .rpt-recap-box { background:#faf8f5; border:0.5px solid #dddad4; border-left:3px solid #1e3a5f; border-radius:6px; padding:12px 14px; }
+  .rpt-recap-lbl { font-size:8px; text-transform:uppercase; letter-spacing:.09em; color:#a89880; font-weight:700; font-family:Arial,sans-serif; margin-bottom:7px; }
+  .rpt-recap-text { font-size:11px; color:#1a1810; line-height:1.7; font-style:italic; }
+  .rpt-recap-sig { font-size:10px; color:#a89880; font-family:Arial,sans-serif; margin-top:8px; }
+  .rpt-kpi-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:7px; }
+  .rpt-kpi { background:#faf8f5; border:0.5px solid #dddad4; border-radius:6px; padding:10px 12px; }
+  .rpt-kpi-l { font-size:8px; text-transform:uppercase; letter-spacing:.07em; color:#a89880; margin-bottom:3px; font-family:Arial,sans-serif; }
+  .rpt-kpi-v { font-size:15px; font-weight:700; line-height:1; font-family:Arial,sans-serif; }
+  .rpt-kpi-s { font-size:9px; color:#a89880; margin-top:4px; font-family:Arial,sans-serif; }
+  .rpt-kpi-v.pos { color:#1e5f3a; }
+  .rpt-kpi-v.amb { color:#7c5a1e; }
+  .rpt-trade-row { display:grid; grid-template-columns:1fr 1fr; gap:7px; margin-top:7px; }
+  .rpt-trade-card { background:#faf8f5; border:0.5px solid #dddad4; border-radius:6px; padding:9px 12px; display:flex; justify-content:space-between; align-items:center; }
+  .rpt-trade-lbl { font-size:8px; text-transform:uppercase; letter-spacing:.07em; color:#a89880; font-family:Arial,sans-serif; margin-bottom:3px; }
+  .rpt-trade-val { font-size:17px; font-weight:700; color:#1a1810; font-family:Arial,sans-serif; }
+  .rpt-trade-sub-lbl { font-size:8px; text-transform:uppercase; letter-spacing:.07em; color:#a89880; font-family:Arial,sans-serif; margin-bottom:3px; text-align:right; }
+  .rpt-trade-sub-val { font-size:11px; font-weight:700; font-family:Arial,sans-serif; text-align:right; }
+  .rpt-bar-legend { display:flex; gap:12px; margin-bottom:7px; font-size:10px; color:#a89880; font-family:Arial,sans-serif; }
+  .rpt-bar-dot { width:8px; height:8px; border-radius:2px; display:inline-block; margin-right:4px; vertical-align:middle; }
+  .rpt-bar-row { display:flex; align-items:center; gap:7px; margin-bottom:5px; }
+  .rpt-bar-mo { font-size:10px; color:#a89880; min-width:26px; font-family:Arial,sans-serif; }
+  .rpt-bar-track { flex:1; height:6px; background:#f0ece6; border-radius:3px; overflow:hidden; display:flex; }
+  .rpt-bar-puts { background:#1e3a5f; height:100%; }
+  .rpt-bar-calls { background:#7c6a52; height:100%; }
+  .rpt-bar-val { font-size:10px; min-width:50px; text-align:right; font-weight:600; color:#1e5f3a; font-family:Arial,sans-serif; }
+  .rpt-tbl { width:100%; border-collapse:collapse; font-size:10px; font-family:Arial,sans-serif; }
+  .rpt-tbl th { background:#f5f0ea; text-align:left; padding:5px 7px; font-size:8px; text-transform:uppercase; letter-spacing:.07em; color:#a89880; border-bottom:1px solid #dddad4; font-weight:700; }
+  .rpt-tbl td { padding:6px 7px; border-bottom:0.5px solid #f0ece6; color:#1a1810; }
+  .rpt-tbl tr:last-child td { border-bottom:none; }
+  .rpt-bdg { display:inline-block; padding:1px 5px; border-radius:3px; font-size:8px; font-weight:700; letter-spacing:.05em; }
+  .rpt-bdg-p  { background:#dde8f5; color:#1e3a5f; }
+  .rpt-bdg-c  { background:#ede8e0; color:#5a4530; }
+  .rpt-bdg-o  { background:#ddf0e8; color:#1a5c38; }
+  .rpt-bdg-cl { background:#f0ece6; color:#7c6a52; }
+  .rpt-bdg-a  { background:#fde8e8; color:#8b2020; }
+  .rpt-pos { color:#1e5f3a; font-weight:600; }
+  .rpt-neg { color:#8b2020; font-weight:600; }
+  .rpt-muted { color:#a89880; }
+  .rpt-pdf-footer { background:#f5f0ea; border-top:1px solid #dddad4; padding:9px 24px; display:flex; justify-content:space-between; align-items:center; font-size:9px; color:#a89880; font-family:Arial,sans-serif; }
+  .rpt-empty { padding:48px; text-align:center; color:var(--text3); font-size:13px; }
+  `;
+  document.head.appendChild(s);
+})();
+
+// ── State ─────────────────────────────
+let rptMonth='', rptRecap='';
+
+// ── Month options helper ──────────────
+function _rptMonthOptions(){
+  const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const now=new Date();
+  const opts=[];
+  for(let i=11;i>=0;i--){
+    const d=new Date(now.getFullYear(), now.getMonth()-i, 1);
+    const val=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+    const lbl=MONTHS[d.getMonth()]+' '+d.getFullYear();
+    opts.push({val,lbl});
+  }
+  return opts.reverse();
+}
+
+// ── Firm / client info from settings ─
+function _rptFirmName(){ return (settings&&settings.firmName)||'RACE Investments'; }
+function _rptClientName(){ return (settings&&settings.clientName)||''; }
+function _rptClientEmail(){ return (settings&&settings.clientEmail)||''; }
+function _rptClientPhone(){ return (settings&&settings.clientPhone)||''; }
+function _rptClientAccount(){ return (settings&&settings.clientAccount)||''; }
+
+// ── Compute report data for a month ──
+function _rptData(monthVal){
+  if(!monthVal) return null;
+  const [yr,mo]=monthVal.split('-').map(Number);
+  const inMonth=t=>{
+    const d=cd(t);
+    if(!d) return false;
+    const dt=new Date(d+'T12:00:00');
+    return dt.getFullYear()===yr&&dt.getMonth()+1===mo;
+  };
+  const closed=trades.filter(t=>inMonth(t));
+  const wins=closed.filter(t=>(calcPL(t)||0)>0).length;
+  const monthPL=closed.reduce((s,t)=>s+(calcPL(t)||0),0);
+  const allClosed=trades.filter(t=>cd(t));
+  const totalPL=allClosed.reduce((s,t)=>s+(calcPL(t)||0),0);
+  const allWins=allClosed.filter(t=>(calcPL(t)||0)>0).length;
+  const allWR=allClosed.length?Math.round(allWins/allClosed.length*1000)/10:0;
+  const monthWR=closed.length?Math.round(wins/closed.length*1000)/10:0;
+  const ars=closed.map(calcARActual).filter(v=>v!=null);
+  const avgAR=ars.length?ars.reduce((a,b)=>a+b,0)/ars.length:null;
+  const capital=getCapital();
+  const pctReturn=capital?monthPL/capital*100:null;
+  // open at END of that month (open date <= last day of month, no close or close after month)
+  const lastDay=new Date(yr,mo,0);
+  const openAtEnd=trades.filter(t=>{
+    const od=t.openDate?new Date(t.openDate+'T12:00:00'):null;
+    if(!od||od>lastDay) return false;
+    const cl=cd(t);
+    if(!cl) return true;
+    return new Date(cl+'T12:00:00')>lastDay;
+  });
+  // monthly bar — last 3 months
+  const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const bars=[];
+  for(let i=2;i>=0;i--){
+    const bd=new Date(yr,mo-1-i,1);
+    const by=bd.getFullYear(), bm=bd.getMonth()+1;
+    const bClosed=trades.filter(t=>{
+      const d=cd(t); if(!d) return false;
+      const dt=new Date(d+'T12:00:00');
+      return dt.getFullYear()===by&&dt.getMonth()+1===bm;
+    });
+    const bPuts=bClosed.filter(t=>t.type==='P').reduce((s,t)=>s+(calcPL(t)||0),0);
+    const bCalls=bClosed.filter(t=>t.type==='C').reduce((s,t)=>s+(calcPL(t)||0),0);
+    const bTotal=bClosed.reduce((s,t)=>s+(calcPL(t)||0),0);
+    bars.push({label:MONTHS[bd.getMonth()], puts:bPuts, calls:bCalls, total:bTotal});
+  }
+  const maxBar=Math.max(...bars.map(b=>Math.max(0,b.total)),1);
+  const assigned=trades.filter(t=>inMonth(t)&&t.assigned==='Yes');
+  return {closed,wins,monthPL,totalPL,allClosed,allWR,monthWR,avgAR,pctReturn,capital,openAtEnd,bars,maxBar,assigned};
+}
+
+// ── Logo SVG ─────────────────────────
+function _rptLogoSVG(size=54){
+  const s=size, r=Math.round(size*12/54);
+  return `<svg width="${s}" height="${s}" viewBox="0 0 72 72" fill="none" style="flex-shrink:0;">
+    <rect width="72" height="72" rx="12" fill="#f0ece6"/>
+    <path d="M 36 14 L 58 42 L 48 42 L 48 58 L 24 58 L 24 42 L 14 42 Z" stroke="#1e3a5f" stroke-width="2.5" fill="none" stroke-linejoin="round"/>
+    <line x1="30" y1="58" x2="30" y2="49" stroke="#1e3a5f" stroke-width="2" stroke-linecap="round" opacity="0.35"/>
+    <line x1="36" y1="58" x2="36" y2="45" stroke="#1e3a5f" stroke-width="2" stroke-linecap="round" opacity="0.35"/>
+    <line x1="42" y1="58" x2="42" y2="49" stroke="#1e3a5f" stroke-width="2" stroke-linecap="round" opacity="0.35"/>
+    <circle cx="36" cy="30" r="4" fill="#1e3a5f"/>
+    <circle cx="36" cy="30" r="2" fill="#f0ece6"/>
+  </svg>`;
+}
+
+// ── Build preview HTML ────────────────
+function _rptBuildPreview(monthVal, recap){
+  const data=_rptData(monthVal);
+  const MONTHS_FULL=['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const [yr,mo]=monthVal.split('-').map(Number);
+  const monthLabel=MONTHS_FULL[mo-1]+' '+yr;
+  const fm2=v=>{ if(v==null||isNaN(v)) return '—'; const a=Math.abs(v); const s=a>=1000?'$'+(a/1000).toFixed(2)+'k':'$'+a.toFixed(2); return v<0?'-'+s:s; };
+  const fp2=v=>v==null?'—':v.toFixed(1)+'%';
+  const fd2=d=>{ if(!d) return '—'; const dt=new Date(d+'T12:00:00'); return `${dt.getMonth()+1}/${dt.getDate()}/${String(dt.getFullYear()).slice(2)}`; };
+
+  // bar chart
+  const maxB=data.maxBar||1;
+  const barsHtml=data.bars.map(b=>{
+    const pp=Math.max(0,b.puts)/maxB*85, cp=Math.max(0,b.calls)/maxB*85;
+    return `<div class="rpt-bar-row">
+      <span class="rpt-bar-mo">${b.label}</span>
+      <div class="rpt-bar-track">
+        <div class="rpt-bar-puts" style="width:${pp}%"></div>
+        <div class="rpt-bar-calls" style="width:${cp}%"></div>
+      </div>
+      <span class="rpt-bar-val">${fm2(b.total)}</span>
+    </div>`;
+  }).join('');
+
+  // open positions
+  const openRows=data.openAtEnd.map(t=>{
+    const d=dte(t.expDate);
+    const dc=d!=null&&d<=7?'rpt-neg':d!=null&&d<=21?'':'rpt-muted';
+    return `<tr>
+      <td><strong>${t.ticker||''}</strong></td>
+      <td><span class="rpt-bdg ${t.type==='P'?'rpt-bdg-p':'rpt-bdg-c'}">${t.type==='P'?'PUT':'CALL'}</span></td>
+      <td>$${parseFloat(t.strike||0).toFixed(2)}</td>
+      <td>${fd2(t.expDate)}</td>
+      <td class="${dc}">${d!=null?d+'d':'—'}</td>
+      <td class="rpt-pos">${fm2((parseFloat(t.premium)||0)*(parseInt(t.contracts)||1)*100)}</td>
+      <td><span class="rpt-bdg rpt-bdg-o">OPEN</span></td>
+    </tr>`;
+  }).join('');
+
+  // assigned shares
+  const assignRows=data.assigned.map(t=>`<tr>
+    <td><strong>${t.ticker||''}</strong></td>
+    <td>${(parseInt(t.contracts)||1)*100}</td>
+    <td>$${parseFloat(t.strike||0).toFixed(2)}</td>
+    <td class="rpt-muted">${fd2(cd(t))}</td>
+    <td class="rpt-muted">Put assigned — wheel continues</td>
+  </tr>`).join('');
+
+  // closed trades
+  const closedRows=data.closed.map(t=>{
+    const pl=calcPL(t);
+    const st=t.assigned==='Yes'?'ASSIGNED':'CLOSED';
+    const sc=t.assigned==='Yes'?'rpt-bdg-a':'rpt-bdg-cl';
+    return `<tr>
+      <td><strong>${t.ticker||''}</strong></td>
+      <td><span class="rpt-bdg ${t.type==='P'?'rpt-bdg-p':'rpt-bdg-c'}">${t.type==='P'?'PUT':'CALL'}</span></td>
+      <td class="rpt-muted">${fd2(t.openDate)}</td>
+      <td class="rpt-muted">${fd2(cd(t))}</td>
+      <td class="rpt-pos">${fm2((parseFloat(t.premium)||0)*(parseInt(t.contracts)||1)*100)}</td>
+      <td class="${pl>=0?'rpt-pos':'rpt-neg'}">${pl!=null?(pl>=0?'+':'')+fm2(pl):'—'}</td>
+      <td><span class="rpt-bdg ${sc}">${st}</span></td>
+    </tr>`;
+  }).join('');
+
+  const pctStr=data.pctReturn!=null?(data.pctReturn>=0?'+':'')+data.pctReturn.toFixed(1)+'% on capital':'—';
+  const firmName=_rptFirmName();
+  const today2=new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
+
+  return `<div class="rpt-pdf-page">
+    <div class="rpt-pdf-hdr">
+      ${_rptLogoSVG(54)}
+      <div style="display:flex;flex-direction:column;flex:1;">
+        <div class="rpt-pdf-firm-name">${firmName}</div>
+        <div class="rpt-pdf-slogan">Your pace. Your returns.</div>
+        <div class="rpt-pdf-underline"></div>
+      </div>
+      <div>
+        <div class="rpt-pdf-report-lbl">Monthly Report</div>
+        <div class="rpt-pdf-report-mo">${monthLabel}</div>
+      </div>
+    </div>
+    <div class="rpt-pdf-client-bar">
+      <div class="rpt-pdf-cf"><span class="rpt-pdf-cl">Client</span><span class="rpt-pdf-cv">${_rptClientName()||'—'}</span></div>
+      <div class="rpt-pdf-cf"><span class="rpt-pdf-cl">Account</span><span class="rpt-pdf-cv">${_rptClientAccount()||'—'}</span></div>
+      <div class="rpt-pdf-cf"><span class="rpt-pdf-cl">Email</span><span class="rpt-pdf-cv">${_rptClientEmail()||'—'}</span></div>
+      <div class="rpt-pdf-cf"><span class="rpt-pdf-cl">Phone</span><span class="rpt-pdf-cv">${_rptClientPhone()||'—'}</span></div>
+    </div>
+    <div class="rpt-pdf-body">
+      ${recap?`
+      <div class="rpt-sec-title">Monthly Recap — ${monthLabel}</div>
+      <div class="rpt-recap-box">
+        <div class="rpt-recap-lbl">A note from your advisor</div>
+        <div class="rpt-recap-text">${recap.replace(/\n/g,'<br>')}</div>
+        <div class="rpt-recap-sig">— ${firmName} &nbsp;·&nbsp; ${today2}</div>
+      </div>`:''}
+      <div class="rpt-sec-title">Monthly Snapshot — ${monthLabel}</div>
+      <div class="rpt-kpi-grid">
+        <div class="rpt-kpi"><div class="rpt-kpi-l">Realized P&amp;L — ${MONTHS_FULL[mo-1]}</div><div class="rpt-kpi-v ${data.monthPL>=0?'pos':'rpt-neg'}">${fm2(data.monthPL)}</div><div class="rpt-kpi-s">${pctStr}</div></div>
+        <div class="rpt-kpi"><div class="rpt-kpi-l">Total Realized — Inception</div><div class="rpt-kpi-v ${data.totalPL>=0?'pos':'rpt-neg'}">${fm2(data.totalPL)}</div><div class="rpt-kpi-s">${data.allClosed.length} trades all time</div></div>
+        <div class="rpt-kpi"><div class="rpt-kpi-l">Win Rate</div><div class="rpt-kpi-v amb">${fp2(data.monthWR)}</div><div class="rpt-kpi-s">${data.wins} of ${data.closed.length} closed this month</div></div>
+        <div class="rpt-kpi"><div class="rpt-kpi-l">Avg AR%</div><div class="rpt-kpi-v amb">${fp2(data.avgAR)}</div><div class="rpt-kpi-s">annualized return</div></div>
+      </div>
+      <div class="rpt-trade-row">
+        <div class="rpt-trade-card">
+          <div><div class="rpt-trade-lbl">Trades closed — ${MONTHS_FULL[mo-1]}</div><div class="rpt-trade-val">${data.closed.length}</div></div>
+          <div><div class="rpt-trade-sub-lbl">Wins / Losses</div><div class="rpt-trade-sub-val"><span style="color:#1e5f3a;">${data.wins}W</span> <span style="color:#dddad4;">·</span> <span style="color:#8b2020;">${data.closed.length-data.wins}L</span></div></div>
+        </div>
+        <div class="rpt-trade-card">
+          <div><div class="rpt-trade-lbl">All-time trades closed</div><div class="rpt-trade-val">${data.allClosed.length}</div></div>
+          <div><div class="rpt-trade-sub-lbl">All-time win rate</div><div class="rpt-trade-sub-val" style="color:#7c5a1e;">${fp2(data.allWR)}</div></div>
+        </div>
+      </div>
+      <div class="rpt-sec-title">Monthly P&amp;L — Puts vs Calls</div>
+      <div class="rpt-bar-legend"><span><span class="rpt-bar-dot" style="background:#1e3a5f;"></span>Puts</span><span><span class="rpt-bar-dot" style="background:#7c6a52;"></span>Calls</span></div>
+      ${barsHtml}
+      ${data.openAtEnd.length?`
+      <div class="rpt-sec-title">Open Positions — End of ${MONTHS_FULL[mo-1]}</div>
+      <table class="rpt-tbl"><thead><tr><th>Ticker</th><th>Type</th><th>Strike</th><th>Expiry</th><th>DTE</th><th>Premium</th><th>Status</th></tr></thead>
+      <tbody>${openRows}</tbody></table>`:''}
+      ${data.assigned.length?`
+      <div class="rpt-sec-title">Assigned Shares Activity</div>
+      <table class="rpt-tbl"><thead><tr><th>Ticker</th><th>Shares</th><th>Cost Basis</th><th>Assigned</th><th>Note</th></tr></thead>
+      <tbody>${assignRows}</tbody></table>`:''}
+      ${data.closed.length?`
+      <div class="rpt-sec-title">Closed Trades — ${monthLabel}</div>
+      <table class="rpt-tbl"><thead><tr><th>Ticker</th><th>Type</th><th>Opened</th><th>Closed</th><th>Premium</th><th>P&amp;L</th><th>Status</th></tr></thead>
+      <tbody>${closedRows}</tbody></table>`:''}
+    </div>
+    <div class="rpt-pdf-footer">
+      <span>${firmName} &nbsp;·&nbsp; Confidential — prepared for ${_rptClientName()||'Client'}</span>
+      <span>Generated ${today2}</span>
+    </div>
+  </div>`;
+}
+
+// ── Generate & download PDF ───────────
+function rptGeneratePDF(){
+  const monthVal=document.getElementById('rpt-month-sel')&&document.getElementById('rpt-month-sel').value;
+  const recap=document.getElementById('rpt-recap-inp')&&document.getElementById('rpt-recap-inp').value;
+  if(!monthVal){ showToast('Please select a month first', false); return; }
+  const data=_rptData(monthVal);
+  if(!data){ showToast('No data for that month', false); return; }
+  const MONTHS_FULL=['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const [yr,mo]=monthVal.split('-').map(Number);
+  const monthLabel=MONTHS_FULL[mo-1]+' '+yr;
+  const firmName=_rptFirmName();
+  const today2=new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
+  const fm2=v=>{ if(v==null||isNaN(v)) return '—'; const a=Math.abs(v); const s=a>=1000?'$'+(a/1000).toFixed(2)+'k':'$'+a.toFixed(2); return v<0?'-'+s:s; };
+  const fp2=v=>v==null?'—':v.toFixed(1)+'%';
+  const fd2=d=>{ if(!d) return '—'; const dt=new Date(d+'T12:00:00'); return `${dt.getMonth()+1}/${dt.getDate()}/${String(dt.getFullYear()).slice(2)}`; };
+  const pctStr=data.pctReturn!=null?(data.pctReturn>=0?'+':'')+data.pctReturn.toFixed(1)+'% on capital':'—';
+  const maxB=data.maxBar||1;
+
+  const barsHtml=data.bars.map(b=>{
+    const pp=Math.max(0,b.puts)/maxB*80, cp=Math.max(0,b.calls)/maxB*80;
+    return `<tr><td style="font-size:10px;color:#a89880;padding:4px 0;width:36px;">${b.label}</td>
+      <td style="padding:4px 6px 4px 0;"><div style="display:flex;height:8px;background:#f0ece6;border-radius:4px;overflow:hidden;width:100%;">
+        <div style="width:${pp}%;background:#1e3a5f;"></div><div style="width:${cp}%;background:#7c6a52;"></div></div></td>
+      <td style="font-size:10px;font-weight:700;color:#1e5f3a;text-align:right;white-space:nowrap;padding:4px 0;">${fm2(b.total)}</td></tr>`;
+  }).join('');
+
+  const openRows=data.openAtEnd.map(t=>{
+    const d=dte(t.expDate);
+    return `<tr><td style="padding:5px 7px;"><strong>${t.ticker||''}</strong></td>
+      <td style="padding:5px 7px;"><span style="background:${t.type==='P'?'#dde8f5':'#ede8e0'};color:${t.type==='P'?'#1e3a5f':'#5a4530'};padding:1px 5px;border-radius:3px;font-size:8px;font-weight:700;">${t.type==='P'?'PUT':'CALL'}</span></td>
+      <td style="padding:5px 7px;">$${parseFloat(t.strike||0).toFixed(2)}</td>
+      <td style="padding:5px 7px;">${fd2(t.expDate)}</td>
+      <td style="padding:5px 7px;color:#a89880;">${d!=null?d+'d':'—'}</td>
+      <td style="padding:5px 7px;color:#1e5f3a;font-weight:600;">${fm2((parseFloat(t.premium)||0)*(parseInt(t.contracts)||1)*100)}</td>
+      <td style="padding:5px 7px;"><span style="background:#ddf0e8;color:#1a5c38;padding:1px 5px;border-radius:3px;font-size:8px;font-weight:700;">OPEN</span></td></tr>`;
+  }).join('');
+
+  const assignRows=data.assigned.map(t=>`<tr>
+    <td style="padding:5px 7px;"><strong>${t.ticker||''}</strong></td>
+    <td style="padding:5px 7px;">${(parseInt(t.contracts)||1)*100}</td>
+    <td style="padding:5px 7px;">$${parseFloat(t.strike||0).toFixed(2)}</td>
+    <td style="padding:5px 7px;color:#a89880;">${fd2(cd(t))}</td>
+    <td style="padding:5px 7px;color:#a89880;">Put assigned — wheel continues</td></tr>`).join('');
+
+  const closedRows=data.closed.map(t=>{
+    const pl=calcPL(t);
+    const st=t.assigned==='Yes'?'ASSIGNED':'CLOSED';
+    const sbg=t.assigned==='Yes'?'#fde8e8':'#f0ece6';
+    const sfg=t.assigned==='Yes'?'#8b2020':'#7c6a52';
+    return `<tr>
+      <td style="padding:5px 7px;"><strong>${t.ticker||''}</strong></td>
+      <td style="padding:5px 7px;"><span style="background:${t.type==='P'?'#dde8f5':'#ede8e0'};color:${t.type==='P'?'#1e3a5f':'#5a4530'};padding:1px 5px;border-radius:3px;font-size:8px;font-weight:700;">${t.type==='P'?'PUT':'CALL'}</span></td>
+      <td style="padding:5px 7px;color:#a89880;">${fd2(t.openDate)}</td>
+      <td style="padding:5px 7px;color:#a89880;">${fd2(cd(t))}</td>
+      <td style="padding:5px 7px;color:#1e5f3a;font-weight:600;">${fm2((parseFloat(t.premium)||0)*(parseInt(t.contracts)||1)*100)}</td>
+      <td style="padding:5px 7px;font-weight:600;color:${pl>=0?'#1e5f3a':'#8b2020'};">${pl!=null?(pl>=0?'+':'')+fm2(pl):'—'}</td>
+      <td style="padding:5px 7px;"><span style="background:${sbg};color:${sfg};padding:1px 5px;border-radius:3px;font-size:8px;font-weight:700;">${st}</span></td></tr>`;
+  }).join('');
+
+  const thStyle='background:#f5f0ea;text-align:left;padding:5px 7px;font-size:8px;text-transform:uppercase;letter-spacing:.07em;color:#a89880;border-bottom:1px solid #dddad4;font-weight:700;';
+  const tblWrap='background:#ffffff;border:0.5px solid #dddad4;border-radius:6px;overflow:hidden;margin-bottom:0;';
+
+  const html=`<!DOCTYPE html><html><head><meta charset="UTF-8">
+  <style>
+    body{margin:0;padding:0;background:#fff;font-family:Georgia,serif;color:#1a1810;}
+    @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+  </style></head><body>
+  <div style="max-width:720px;margin:0 auto;">
+    <div style="background:#fff;border-left:5px solid #1e3a5f;padding:22px 28px;display:flex;align-items:center;gap:16px;">
+      <svg width="54" height="54" viewBox="0 0 72 72" fill="none"><rect width="72" height="72" rx="12" fill="#f0ece6"/>
+        <path d="M 36 14 L 58 42 L 48 42 L 48 58 L 24 58 L 24 42 L 14 42 Z" stroke="#1e3a5f" stroke-width="2.5" fill="none" stroke-linejoin="round"/>
+        <line x1="30" y1="58" x2="30" y2="49" stroke="#1e3a5f" stroke-width="2" stroke-linecap="round" opacity="0.35"/>
+        <line x1="36" y1="58" x2="36" y2="45" stroke="#1e3a5f" stroke-width="2" stroke-linecap="round" opacity="0.35"/>
+        <line x1="42" y1="58" x2="42" y2="49" stroke="#1e3a5f" stroke-width="2" stroke-linecap="round" opacity="0.35"/>
+        <circle cx="36" cy="30" r="4" fill="#1e3a5f"/><circle cx="36" cy="30" r="2" fill="#f0ece6"/>
+      </svg>
+      <div style="flex:1;">
+        <div style="font-size:20px;font-weight:700;color:#1a1810;letter-spacing:-.3px;">${firmName}</div>
+        <div style="font-size:10px;color:#a89880;font-style:italic;margin-top:3px;font-family:Arial,sans-serif;">Your pace. Your returns.</div>
+        <div style="width:32px;height:2px;background:#1e3a5f;border-radius:2px;margin-top:7px;"></div>
+      </div>
+      <div style="text-align:right;">
+        <div style="font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:#a89880;font-weight:700;font-family:Arial,sans-serif;">Monthly Report</div>
+        <div style="font-size:18px;font-weight:700;color:#1a1810;margin-top:2px;font-family:Arial,sans-serif;">${monthLabel}</div>
+      </div>
+    </div>
+    <div style="background:#f5f0ea;border-top:1px solid #dddad4;border-bottom:1px solid #dddad4;padding:10px 28px;display:flex;">
+      <div style="flex:1;display:flex;flex-direction:column;gap:2px;"><span style="font-size:8px;text-transform:uppercase;letter-spacing:.09em;color:#a89880;font-weight:700;font-family:Arial,sans-serif;">Client</span><span style="font-size:11px;font-weight:600;color:#1a1810;font-family:Arial,sans-serif;">${_rptClientName()||'—'}</span></div>
+      <div style="flex:1;display:flex;flex-direction:column;gap:2px;"><span style="font-size:8px;text-transform:uppercase;letter-spacing:.09em;color:#a89880;font-weight:700;font-family:Arial,sans-serif;">Account</span><span style="font-size:11px;font-weight:600;color:#1a1810;font-family:Arial,sans-serif;">${_rptClientAccount()||'—'}</span></div>
+      <div style="flex:1;display:flex;flex-direction:column;gap:2px;"><span style="font-size:8px;text-transform:uppercase;letter-spacing:.09em;color:#a89880;font-weight:700;font-family:Arial,sans-serif;">Email</span><span style="font-size:11px;font-weight:600;color:#1a1810;font-family:Arial,sans-serif;">${_rptClientEmail()||'—'}</span></div>
+      <div style="flex:1;display:flex;flex-direction:column;gap:2px;"><span style="font-size:8px;text-transform:uppercase;letter-spacing:.09em;color:#a89880;font-weight:700;font-family:Arial,sans-serif;">Phone</span><span style="font-size:11px;font-weight:600;color:#1a1810;font-family:Arial,sans-serif;">${_rptClientPhone()||'—'}</span></div>
+    </div>
+    <div style="padding:20px 28px;">
+      ${recap?`<div style="font-size:8px;text-transform:uppercase;letter-spacing:.12em;color:#1e3a5f;font-weight:700;font-family:Arial,sans-serif;border-bottom:1.5px solid #1e3a5f;padding-bottom:4px;margin-bottom:10px;">Monthly Recap — ${monthLabel}</div>
+      <div style="background:#faf8f5;border:0.5px solid #dddad4;border-left:3px solid #1e3a5f;border-radius:6px;padding:12px 14px;margin-bottom:18px;">
+        <div style="font-size:8px;text-transform:uppercase;letter-spacing:.09em;color:#a89880;font-weight:700;font-family:Arial,sans-serif;margin-bottom:7px;">A note from your advisor</div>
+        <div style="font-size:11px;color:#1a1810;line-height:1.7;font-style:italic;">${recap.replace(/\n/g,'<br>')}</div>
+        <div style="font-size:9px;color:#a89880;font-family:Arial,sans-serif;margin-top:8px;">— ${firmName} &nbsp;·&nbsp; ${today2}</div>
+      </div>`:''}
+      <div style="font-size:8px;text-transform:uppercase;letter-spacing:.12em;color:#1e3a5f;font-weight:700;font-family:Arial,sans-serif;border-bottom:1.5px solid #1e3a5f;padding-bottom:4px;margin-bottom:10px;">Monthly Snapshot — ${monthLabel}</div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-bottom:7px;">
+        <div style="background:#faf8f5;border:0.5px solid #dddad4;border-radius:6px;padding:10px 12px;">
+          <div style="font-size:8px;text-transform:uppercase;letter-spacing:.07em;color:#a89880;margin-bottom:3px;font-family:Arial,sans-serif;">Realized P&L — ${MONTHS_FULL[mo-1]}</div>
+          <div style="font-size:15px;font-weight:700;color:${data.monthPL>=0?'#1e5f3a':'#8b2020'};font-family:Arial,sans-serif;">${fm2(data.monthPL)}</div>
+          <div style="font-size:9px;color:#a89880;margin-top:4px;font-family:Arial,sans-serif;">${pctStr}</div>
+        </div>
+        <div style="background:#faf8f5;border:0.5px solid #dddad4;border-radius:6px;padding:10px 12px;">
+          <div style="font-size:8px;text-transform:uppercase;letter-spacing:.07em;color:#a89880;margin-bottom:3px;font-family:Arial,sans-serif;">Total Realized — Inception</div>
+          <div style="font-size:15px;font-weight:700;color:${data.totalPL>=0?'#1e5f3a':'#8b2020'};font-family:Arial,sans-serif;">${fm2(data.totalPL)}</div>
+          <div style="font-size:9px;color:#a89880;margin-top:4px;font-family:Arial,sans-serif;">${data.allClosed.length} trades all time</div>
+        </div>
+        <div style="background:#faf8f5;border:0.5px solid #dddad4;border-radius:6px;padding:10px 12px;">
+          <div style="font-size:8px;text-transform:uppercase;letter-spacing:.07em;color:#a89880;margin-bottom:3px;font-family:Arial,sans-serif;">Win Rate</div>
+          <div style="font-size:15px;font-weight:700;color:#7c5a1e;font-family:Arial,sans-serif;">${fp2(data.monthWR)}</div>
+          <div style="font-size:9px;color:#a89880;margin-top:4px;font-family:Arial,sans-serif;">${data.wins} of ${data.closed.length} closed</div>
+        </div>
+        <div style="background:#faf8f5;border:0.5px solid #dddad4;border-radius:6px;padding:10px 12px;">
+          <div style="font-size:8px;text-transform:uppercase;letter-spacing:.07em;color:#a89880;margin-bottom:3px;font-family:Arial,sans-serif;">Avg AR%</div>
+          <div style="font-size:15px;font-weight:700;color:#7c5a1e;font-family:Arial,sans-serif;">${fp2(data.avgAR)}</div>
+          <div style="font-size:9px;color:#a89880;margin-top:4px;font-family:Arial,sans-serif;">annualized return</div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:18px;">
+        <div style="background:#faf8f5;border:0.5px solid #dddad4;border-radius:6px;padding:9px 12px;display:flex;justify-content:space-between;align-items:center;">
+          <div><div style="font-size:8px;text-transform:uppercase;letter-spacing:.07em;color:#a89880;font-family:Arial,sans-serif;margin-bottom:3px;">Trades Closed — ${MONTHS_FULL[mo-1]}</div><div style="font-size:17px;font-weight:700;font-family:Arial,sans-serif;">${data.closed.length}</div></div>
+          <div style="text-align:right;"><div style="font-size:8px;text-transform:uppercase;letter-spacing:.07em;color:#a89880;font-family:Arial,sans-serif;margin-bottom:3px;">Wins / Losses</div><div style="font-size:11px;font-weight:700;font-family:Arial,sans-serif;"><span style="color:#1e5f3a;">${data.wins}W</span> <span style="color:#dddad4;">·</span> <span style="color:#8b2020;">${data.closed.length-data.wins}L</span></div></div>
+        </div>
+        <div style="background:#faf8f5;border:0.5px solid #dddad4;border-radius:6px;padding:9px 12px;display:flex;justify-content:space-between;align-items:center;">
+          <div><div style="font-size:8px;text-transform:uppercase;letter-spacing:.07em;color:#a89880;font-family:Arial,sans-serif;margin-bottom:3px;">All-Time Trades Closed</div><div style="font-size:17px;font-weight:700;font-family:Arial,sans-serif;">${data.allClosed.length}</div></div>
+          <div style="text-align:right;"><div style="font-size:8px;text-transform:uppercase;letter-spacing:.07em;color:#a89880;font-family:Arial,sans-serif;margin-bottom:3px;">All-Time Win Rate</div><div style="font-size:11px;font-weight:700;color:#7c5a1e;font-family:Arial,sans-serif;">${fp2(data.allWR)}</div></div>
+        </div>
+      </div>
+      <div style="font-size:8px;text-transform:uppercase;letter-spacing:.12em;color:#1e3a5f;font-weight:700;font-family:Arial,sans-serif;border-bottom:1.5px solid #1e3a5f;padding-bottom:4px;margin-bottom:10px;">Monthly P&L — Puts vs Calls</div>
+      <div style="display:flex;gap:12px;margin-bottom:8px;font-size:10px;color:#a89880;font-family:Arial,sans-serif;">
+        <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#1e3a5f;margin-right:4px;vertical-align:middle;"></span>Puts</span>
+        <span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#7c6a52;margin-right:4px;vertical-align:middle;"></span>Calls</span>
+      </div>
+      <table style="width:100%;border-collapse:collapse;margin-bottom:18px;">${barsHtml}</table>
+      ${data.openAtEnd.length?`
+      <div style="font-size:8px;text-transform:uppercase;letter-spacing:.12em;color:#1e3a5f;font-weight:700;font-family:Arial,sans-serif;border-bottom:1.5px solid #1e3a5f;padding-bottom:4px;margin-bottom:10px;">Open Positions — End of ${MONTHS_FULL[mo-1]}</div>
+      <div style="${tblWrap}margin-bottom:18px;"><table style="width:100%;border-collapse:collapse;font-size:10px;font-family:Arial,sans-serif;">
+        <thead><tr><th style="${thStyle}">Ticker</th><th style="${thStyle}">Type</th><th style="${thStyle}">Strike</th><th style="${thStyle}">Expiry</th><th style="${thStyle}">DTE</th><th style="${thStyle}">Premium</th><th style="${thStyle}">Status</th></tr></thead>
+        <tbody>${openRows}</tbody></table></div>`:''}
+      ${data.assigned.length?`
+      <div style="font-size:8px;text-transform:uppercase;letter-spacing:.12em;color:#1e3a5f;font-weight:700;font-family:Arial,sans-serif;border-bottom:1.5px solid #1e3a5f;padding-bottom:4px;margin-bottom:10px;">Assigned Shares Activity</div>
+      <div style="${tblWrap}margin-bottom:18px;"><table style="width:100%;border-collapse:collapse;font-size:10px;font-family:Arial,sans-serif;">
+        <thead><tr><th style="${thStyle}">Ticker</th><th style="${thStyle}">Shares</th><th style="${thStyle}">Cost Basis</th><th style="${thStyle}">Assigned</th><th style="${thStyle}">Note</th></tr></thead>
+        <tbody>${assignRows}</tbody></table></div>`:''}
+      ${data.closed.length?`
+      <div style="font-size:8px;text-transform:uppercase;letter-spacing:.12em;color:#1e3a5f;font-weight:700;font-family:Arial,sans-serif;border-bottom:1.5px solid #1e3a5f;padding-bottom:4px;margin-bottom:10px;">Closed Trades — ${monthLabel}</div>
+      <div style="${tblWrap}margin-bottom:18px;"><table style="width:100%;border-collapse:collapse;font-size:10px;font-family:Arial,sans-serif;">
+        <thead><tr><th style="${thStyle}">Ticker</th><th style="${thStyle}">Type</th><th style="${thStyle}">Opened</th><th style="${thStyle}">Closed</th><th style="${thStyle}">Premium</th><th style="${thStyle}">P&L</th><th style="${thStyle}">Status</th></tr></thead>
+        <tbody>${closedRows}</tbody></table></div>`:''}
+    </div>
+    <div style="background:#f5f0ea;border-top:1px solid #dddad4;padding:9px 28px;display:flex;justify-content:space-between;align-items:center;font-size:9px;color:#a89880;font-family:Arial,sans-serif;">
+      <span>${firmName} &nbsp;·&nbsp; Confidential — prepared for ${_rptClientName()||'Client'}</span>
+      <span>Generated ${today2}</span>
+    </div>
+  </div>
+  </body></html>`;
+
+  const blob=new Blob([html],{type:'text/html'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  const clientSlug=(_rptClientName()||'client').replace(/[^a-z0-9]/gi,'_');
+  a.href=url;
+  a.download=`RACE_Investments_${clientSlug}_${monthVal}_Report.html`;
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),2000);
+  showToast('Report downloaded — open in browser and print to PDF', false);
+}
+
+// ── Copy email summary ────────────────
+function rptCopyEmail(){
+  const monthVal=document.getElementById('rpt-month-sel')&&document.getElementById('rpt-month-sel').value;
+  const recap=document.getElementById('rpt-recap-inp')&&document.getElementById('rpt-recap-inp').value;
+  if(!monthVal){ showToast('Please select a month first', false); return; }
+  const data=_rptData(monthVal);
+  if(!data){ showToast('No data for that month', false); return; }
+  const MONTHS_FULL=['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const [yr,mo]=monthVal.split('-').map(Number);
+  const monthLabel=MONTHS_FULL[mo-1]+' '+yr;
+  const fm2=v=>{ if(v==null||isNaN(v)) return '—'; const a=Math.abs(v); const s=a>=1000?'$'+(a/1000).toFixed(2)+'k':'$'+a.toFixed(2); return v<0?'-'+s:s; };
+  const fp2=v=>v==null?'—':v.toFixed(1)+'%';
+  const pctStr=data.pctReturn!=null?(data.pctReturn>=0?'+':'')+data.pctReturn.toFixed(1)+'%':'—';
+  const firmName=_rptFirmName();
+  const client=_rptClientName()||'there';
+
+  let text=`Hi ${client.split(' ')[0]},\n\nHope you're doing well! Here's your ${monthLabel} performance summary.\n\n`;
+  if(recap) text+=`${recap}\n\n`;
+  text+=`── ${monthLabel} Highlights ──\n`;
+  text+=`Realized P&L:         ${fm2(data.monthPL)} (${pctStr} on capital)\n`;
+  text+=`Total Realized (All): ${fm2(data.totalPL)}\n`;
+  text+=`Trades Closed:        ${data.closed.length} (${data.wins}W · ${data.closed.length-data.wins}L)\n`;
+  text+=`Win Rate:             ${fp2(data.monthWR)} this month / ${fp2(data.allWR)} all time\n`;
+  text+=`Avg AR%:              ${fp2(data.avgAR)}\n\n`;
+  if(data.openAtEnd.length){
+    text+=`── Open Positions ──\n`;
+    data.openAtEnd.forEach(t=>{ text+=`${t.ticker} ${t.type==='P'?'PUT':'CALL'} $${parseFloat(t.strike||0).toFixed(0)} exp ${t.expDate||'—'}\n`; });
+    text+='\n';
+  }
+  text+=`Full report attached.\n\nBest,\n${firmName}`;
+
+  navigator.clipboard.writeText(text).then(()=>{
+    showToast('Email summary copied to clipboard', false);
+  }).catch(()=>{
+    showToast('Could not copy — please copy manually', false);
+  });
+}
+
+// ── Save client info to settings ──────
+function rptSaveClientInfo(){
+  settings.firmName=document.getElementById('rpt-firm-name').value.trim();
+  settings.clientName=document.getElementById('rpt-client-name').value.trim();
+  settings.clientEmail=document.getElementById('rpt-client-email').value.trim();
+  settings.clientPhone=document.getElementById('rpt-client-phone').value.trim();
+  settings.clientAccount=document.getElementById('rpt-client-account').value.trim();
+  const _spid=_activeProfile?_activeProfile.id:'default';
+  localStorage.setItem('wt_settings_'+_spid, JSON.stringify(settings));
+  rptRefreshPreview();
+  showToast('Client info saved', false);
+}
+
+// ── Refresh live preview ──────────────
+function rptRefreshPreview(){
+  const monthVal=document.getElementById('rpt-month-sel')&&document.getElementById('rpt-month-sel').value;
+  const recap=document.getElementById('rpt-recap-inp')&&document.getElementById('rpt-recap-inp').value||'';
+  const wrap=document.getElementById('rpt-preview-inner');
+  if(!wrap) return;
+  if(!monthVal){ wrap.innerHTML='<div class="rpt-empty">Select a month to preview the report</div>'; return; }
+  wrap.innerHTML=_rptBuildPreview(monthVal, recap);
+}
+
+// ── Render Reports Tab ────────────────
+function renderReports(){
+  injectReportsCSS();
+  const months=_rptMonthOptions();
+  const lastMonth=months[0].val;
+  const moOptions=months.map(m=>`<option value="${m.val}">${m.lbl}</option>`).join('');
+
+  document.getElementById('reports-content').innerHTML=`
+  <div class="rpt-sidebar">
+    <div class="rpt-card">
+      <div class="rpt-card-hdr">Firm &amp; Client Info</div>
+      <div class="rpt-field"><div class="rpt-label">Firm Name</div><input class="rpt-input" id="rpt-firm-name" value="${_rptFirmName()}" placeholder="RACE Investments" oninput="rptRefreshPreview()"/></div>
+      <div class="rpt-field"><div class="rpt-label">Client Name</div><input class="rpt-input" id="rpt-client-name" value="${_rptClientName()}" placeholder="Sarah Johnson" oninput="rptRefreshPreview()"/></div>
+      <div class="rpt-field"><div class="rpt-label">Account Number</div><input class="rpt-input" id="rpt-client-account" value="${_rptClientAccount()}" placeholder="#RACE-0001" oninput="rptRefreshPreview()"/></div>
+      <div class="rpt-field"><div class="rpt-label">Email</div><input class="rpt-input" id="rpt-client-email" value="${_rptClientEmail()}" placeholder="client@example.com" oninput="rptRefreshPreview()"/></div>
+      <div class="rpt-field"><div class="rpt-label">Phone</div><input class="rpt-input" id="rpt-client-phone" value="${_rptClientPhone()}" placeholder="(415) 555-0000" oninput="rptRefreshPreview()"/></div>
+      <div class="rpt-btn-row"><button class="rpt-btn-primary" onclick="rptSaveClientInfo()">Save Info</button></div>
+    </div>
+    <div class="rpt-card">
+      <div class="rpt-card-hdr">Report Settings</div>
+      <div class="rpt-field"><div class="rpt-label">Month</div>
+        <select class="rpt-select" id="rpt-month-sel" onchange="rptRefreshPreview()">
+          <option value="">Select a month…</option>${moOptions}
+        </select>
+      </div>
+      <div class="rpt-field"><div class="rpt-label">Monthly Recap (optional)</div>
+        <textarea class="rpt-textarea" id="rpt-recap-inp" placeholder="Write a brief note to your client about this month — market conditions, strategy highlights, what's coming next…" oninput="rptRefreshPreview()"></textarea>
+      </div>
+    </div>
+    <div class="rpt-card">
+      <div class="rpt-card-hdr">Generate</div>
+      <div class="rpt-btn-row" style="flex-direction:column;gap:8px;">
+        <button class="rpt-btn-primary" onclick="rptGeneratePDF()" style="width:100%;">⬇ Download Report</button>
+        <button class="rpt-btn-ghost" onclick="rptCopyEmail()" style="width:100%;">⎘ Copy Email Summary</button>
+      </div>
+      <div style="padding:0 16px 12px;font-size:10px;color:var(--text3);line-height:1.5;">Download opens as HTML — open in your browser and use <strong>Print → Save as PDF</strong> for a perfect PDF.</div>
+    </div>
+  </div>
+  <div class="rpt-preview-wrap">
+    <div class="rpt-preview-hdr">
+      <span>Live Preview</span>
+      <span style="font-size:10px;color:var(--text3);">Updates as you type</span>
+    </div>
+    <div class="rpt-preview-body"><div id="rpt-preview-inner"><div class="rpt-empty">Select a month to preview the report</div></div></div>
+  </div>`;
+
+  // default to last month
+  const sel=document.getElementById('rpt-month-sel');
+  if(sel) sel.value=lastMonth;
+  rptRefreshPreview();
+}
 
 </script>
 </body>
