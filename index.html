@@ -52,11 +52,11 @@ header{display:flex;align-items:center;justify-content:space-between;padding:16p
 .logo{font-family:var(--sans);font-weight:800;font-size:17px;letter-spacing:-0.5px;display:flex;align-items:center;gap:9px;}
 .logo-dot{width:7px;height:7px;background:var(--green);border-radius:50%;box-shadow:0 0 10px var(--green);animation:pulse 2s infinite;}
 @keyframes pulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.5;transform:scale(.8);}}
-nav{display:flex;gap:3px;}
-nav button{background:none;border:none;color:var(--text3);font-family:var(--mono);font-size:11px;padding:6px 13px;border-radius:6px;cursor:pointer;letter-spacing:.08em;text-transform:uppercase;transition:all .15s;}
+nav{display:flex;gap:3px;flex:1;min-width:0;overflow-x:auto;scrollbar-width:none;justify-content:center;}nav::-webkit-scrollbar{display:none;}
+nav button{background:none;border:none;color:var(--text3);font-family:var(--mono);font-size:11px;padding:6px 13px;border-radius:6px;cursor:pointer;letter-spacing:.08em;text-transform:uppercase;transition:all .15s;white-space:nowrap;flex-shrink:0;}
 nav button:hover{color:var(--text2);background:var(--surface2);}
 nav button.active{color:var(--green);background:var(--green-dim);}
-.hdr-right{display:flex;align-items:center;gap:8px;}
+.hdr-right{display:flex;align-items:center;gap:8px;flex-shrink:0;}
 .btn-ghost{background:none;border:1px solid var(--border2);color:var(--text2);font-family:var(--mono);font-size:11px;padding:7px 14px;border-radius:6px;cursor:pointer;transition:all .15s;}
 .btn-ghost:hover{border-color:var(--green);color:var(--green);}
 .btn-primary{background:var(--green);color:#000;border:none;font-family:var(--mono);font-size:11px;font-weight:500;padding:7px 16px;border-radius:6px;cursor:pointer;transition:all .15s;}
