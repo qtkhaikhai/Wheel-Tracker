@@ -641,8 +641,6 @@ tbody td{padding:10px 13px;white-space:nowrap;}
       <span id="drive-status-text">↑ Save to Drive</span>
     </div>
     <button class="btn-undo" id="undo-btn" onclick="undo()" disabled title="Undo (Ctrl+Z)">↩ Undo</button>
-    <button class="btn-ghost" onclick="openImport()">⬆ Import</button>
-    <button class="btn-primary" onclick="addRow()">+ Add Row</button>
   </div>
 </header>
 <div class="toast" id="toast"><span id="toast-msg"></span><button class="toast-undo" onclick="undo()">Undo</button></div>
@@ -779,6 +777,15 @@ tbody td{padding:10px 13px;white-space:nowrap;}
 
       <div class="settings-section">
         <div class="settings-section-title">Data</div>
+        <div class="settings-row">
+          <div class="settings-label">
+            <div class="settings-label-title">Import Trades</div>
+            <div class="settings-label-sub">Import trades from an Excel or CSV file (Standard template or Charles Schwab export).</div>
+          </div>
+          <div class="settings-control">
+            <button class="settings-btn" onclick="openImport()">⬆ Import</button>
+          </div>
+        </div>
         <div class="settings-row">
           <div class="settings-label">
             <div class="settings-label-title">Export All Data <span id="settings-profile-label" style="color:var(--green);font-size:10px;margin-left:6px;"></span></div>
