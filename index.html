@@ -4682,6 +4682,7 @@ function _goalSim(P,monthly,annualRate,goal,maxMonths){
 }
 function _goalYrs(m){ if(m<0) return 'Not reached'; const y=Math.floor(m/12), mo=m%12; if(y===0) return mo+' mo'; return y+'y'+(mo?' '+mo+'m':''); }
 function _goalDate(m){ if(m<0) return '—'; const d=new Date(); d.setMonth(d.getMonth()+m); return d.toLocaleDateString('en-US',{month:'short',year:'numeric'}); }
+function _goalMoney(v){ if(v==null||isNaN(v)) return '—'; const sign=v<0?'-':''; const n=Math.abs(v); let s; if(n>=1e6) s=(n/1e6).toFixed(2).replace(/\.?0+$/,'')+'M'; else if(n>=1e3) s=(n/1e3).toFixed(2).replace(/\.?0+$/,'')+'k'; else s=n.toFixed(0); return sign+'$'+s; }
 
 function goalEdit(key,val){
   if(key==='bal'){ settings.goalBalanceMode='manual'; settings.goalBalance=parseFloat(val)||0; }
@@ -4692,6 +4693,37 @@ function goalEdit(key,val){
 function goalSyncLive(){
   settings.goalBalanceMode='live';
   delete settings.goalBalance;
+  _goalPersist();
+  renderGoal();
+}
+function _goalPortfolioRate(){
+  const closed=trades.filter(t=>cd(t));
+  const realizedAll=closed.reduce((s,t)=>s+(calcPL(t)||0),0);
+  const inv={}; let shareAppr=0;
+  trades.filter(t=>t.assigned==='Yes'&&cd(t)).slice()
+    .sort((a,b)=>new Date(cd(a))-new Date(cd(b)))
+    .forEach(t=>{
+      const sh=(parseInt(t.contracts)||1)*100, strike=parseFloat(t.strike)||0;
+      if(!inv[t.ticker]) inv[t.ticker]={shares:0,cost:0};
+      const pos=inv[t.ticker];
+      if(t.type==='P'){ pos.shares+=sh; pos.cost+=strike*sh; }
+      else if(t.type==='C'&&pos.shares>0){
+        const sold=Math.min(sh,pos.shares), avgCost=pos.cost/pos.shares;
+        shareAppr+=(strike-avgCost)*sold;
+        pos.cost-=avgCost*sold; pos.shares-=sold;
+        if(pos.shares<=0){ pos.shares=0; pos.cost=0; }
+      }
+    });
+  const cap=getCapital();
+  const dates=trades.map(t=>t.openDate).filter(Boolean).sort();
+  if(!dates.length||cap<=0) return null;
+  const days=Math.max(1,Math.round((new Date()-new Date(dates[0]))/86400e3));
+  return ((realizedAll+shareAppr)/cap)*(365/days)*100;
+}
+function goalUsePortfolioRate(){
+  const r=_goalPortfolioRate();
+  if(r==null) return;
+  settings.goalReturn=Math.round(r*10)/10;
   _goalPersist();
   renderGoal();
 }
@@ -4711,8 +4743,13 @@ function renderGoal(){
   const lbl='font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--text3);margin-bottom:4px;font-weight:500;';
 
   const balCap=isManual
-    ? `Manual override · <span style="color:var(--green);cursor:pointer;" onclick="goalSyncLive()">↻ Sync to live (${fm(live)})</span>`
-    : `Auto-synced from portfolio · ${fm(live)}`;
+    ? `Manual override · <span style="color:var(--green);cursor:pointer;" onclick="goalSyncLive()">↻ Sync to live (${_goalMoney(live)})</span>`
+    : `Auto-synced from portfolio · ${_goalMoney(live)}`;
+
+  const pRate=_goalPortfolioRate();
+  const retCap=pRate!=null
+    ? `<span style="color:var(--green);cursor:pointer;" onclick="goalUsePortfolioRate()">↻ Use portfolio rate (${pRate.toFixed(1)}%)</span>`
+    : `No closed trades yet`;
 
   const gc=document.getElementById('goal-content');
   gc.innerHTML=`
@@ -4722,7 +4759,7 @@ function renderGoal(){
       <div><div style="${lbl}">Goal amount ($)</div><input style="${inp}" type="number" step="1000" id="g-goal" value="${settings.goalAmount}" oninput="goalEdit('goalAmount',this.value)"/></div>
       <div><div style="${lbl}">Current balance ($)</div><input style="${inp}" type="number" step="1000" id="g-bal" value="${Math.round(bal)}" oninput="goalEdit('bal',this.value)"/><div id="g-bal-cap" style="font-size:9px;color:var(--text3);margin-top:4px;">${balCap}</div></div>
       <div><div style="${lbl}">Monthly deposit ($)</div><input style="${inp}" type="number" step="50" id="g-dep" value="${settings.goalDeposit}" oninput="goalEdit('goalDeposit',this.value)"/></div>
-      <div><div style="${lbl}">Annual return (%)</div><input style="${inp}" type="number" step="0.5" id="g-ret" value="${settings.goalReturn}" oninput="goalEdit('goalReturn',this.value)"/></div>
+      <div><div style="${lbl}">Annual return (%)</div><input style="${inp}" type="number" step="0.5" id="g-ret" value="${settings.goalReturn}" oninput="goalEdit('goalReturn',this.value)"/><div style="font-size:9px;color:var(--text3);margin-top:4px;">${retCap}</div></div>
       <div><div style="${lbl}">Accelerated deposit ($)</div><input style="${inp}" type="number" step="50" id="g-adep" value="${settings.goalAccDeposit}" oninput="goalEdit('goalAccDeposit',this.value)"/></div>
       <div><div style="${lbl}">Accelerated return (%)</div><input style="${inp}" type="number" step="0.5" id="g-aret" value="${settings.goalAccReturn}" oninput="goalEdit('goalAccReturn',this.value)"/></div>
     </div>
@@ -4760,9 +4797,9 @@ function goalRecompute(){
   // headline
   const hl=document.getElementById('goal-headline');
   if(hl){
-    if(bal>=goal) hl.innerHTML=`You're already at your goal of <b style="color:var(--green);">${fm(goal)}</b>. Time to set a higher target.`;
-    else if(p.crossing>=0) hl.innerHTML=`At <b style="color:var(--text);">${fm(dep)}/mo</b> earning <b style="color:var(--text);">${ret}%</b>, you reach <b style="color:var(--green);">${fm(goal)}</b> in <b style="color:var(--green);">${_goalYrs(p.crossing)}</b> — around <b style="color:var(--text);">${_goalDate(p.crossing)}</b>.`;
-    else hl.innerHTML=`At <b style="color:var(--text);">${fm(dep)}/mo</b> earning <b style="color:var(--text);">${ret}%</b>, you don't reach <b>${fm(goal)}</b> within 50 years. Try raising the deposit or return.`;
+    if(bal>=goal) hl.innerHTML=`You're already at your goal of <b style="color:var(--green);">${_goalMoney(goal)}</b>. Time to set a higher target.`;
+    else if(p.crossing>=0) hl.innerHTML=`At <b style="color:var(--text);">${_goalMoney(dep)}/mo</b> earning <b style="color:var(--text);">${ret}%</b>, you reach <b style="color:var(--green);">${_goalMoney(goal)}</b> in <b style="color:var(--green);">${_goalYrs(p.crossing)}</b> — around <b style="color:var(--text);">${_goalDate(p.crossing)}</b>.`;
+    else hl.innerHTML=`At <b style="color:var(--text);">${_goalMoney(dep)}/mo</b> earning <b style="color:var(--text);">${ret}%</b>, you don't reach <b>${_goalMoney(goal)}</b> within 50 years. Try raising the deposit or return.`;
   }
 
   // result cards
@@ -4799,7 +4836,7 @@ function _goalChartSVG(goal,bal,g,p,a){
   const line=sim=>{ let d=''; for(let yr=0;yr<=horizon;yr++) d+=(yr===0?'M':'L')+xOf(yr).toFixed(1)+' '+yOf(valAt(sim,yr)).toFixed(1)+' '; return d.trim(); };
   // y gridlines
   let yAxis='';
-  for(let k=0;k<=4;k++){ const v=yMax*k/4; const y=yOf(v); yAxis+=`<line x1="${pad.left}" y1="${y}" x2="${W-pad.right}" y2="${y}" stroke="var(--border)" stroke-width="1"/><text x="${pad.left-8}" y="${y+4}" text-anchor="end" font-size="10" fill="var(--text2)" font-family="DM Mono,monospace">${fm(v)}</text>`; }
+  for(let k=0;k<=4;k++){ const v=yMax*k/4; const y=yOf(v); yAxis+=`<line x1="${pad.left}" y1="${y}" x2="${W-pad.right}" y2="${y}" stroke="var(--border)" stroke-width="1"/><text x="${pad.left-8}" y="${y+4}" text-anchor="end" font-size="10" fill="var(--text2)" font-family="DM Mono,monospace">${_goalMoney(v)}</text>`; }
   // x labels
   const step=horizon<=10?2:horizon<=24?5:10;
   let xAxis='';
