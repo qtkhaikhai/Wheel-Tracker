@@ -2008,6 +2008,33 @@ function _renderSummaryInner(container){
     }
   });
   const assignedCost=Object.values(inv).reduce((s,o)=>s+o.cost,0);
+
+  // ──────── share appreciation realized when covered calls are assigned (shares called away)
+  // Wheel: CSP assigned → own shares at put strike (cost basis). CC assigned → shares sold at call strike.
+  // Appreciation = (call strike − avg cost basis) × shares called away. Option premium is already in Realized P&L.
+  const _apprInv={}; // per-ticker running inventory {shares, cost}
+  let shareApprInRange=0, shareApprAllTime=0;
+  trades.filter(t=>t.assigned==='Yes'&&cd(t))
+    .slice()
+    .sort((a,b)=>new Date(cd(a))-new Date(cd(b)))
+    .forEach(t=>{
+      const sh=(parseInt(t.contracts)||1)*100;
+      const strike=parseFloat(t.strike)||0;
+      if(!_apprInv[t.ticker]) _apprInv[t.ticker]={shares:0,cost:0};
+      const pos=_apprInv[t.ticker];
+      if(t.type==='P'){
+        pos.shares+=sh; pos.cost+=strike*sh;           // shares acquired at put strike
+      } else if(t.type==='C' && pos.shares>0){
+        const sold=Math.min(sh,pos.shares);
+        const avgCost=pos.cost/pos.shares;
+        const gain=(strike-avgCost)*sold;              // capital gain on called-away shares
+        shareApprAllTime+=gain;
+        if(inSummaryRange(cd(t))) shareApprInRange+=gain;
+        pos.cost-=avgCost*sold; pos.shares-=sold;
+        if(pos.shares<=0){ pos.shares=0; pos.cost=0; }
+      }
+    });
+
   const longCost=longs.filter(l=>!l.calledAway).reduce((s,l)=>s+(parseFloat(l.shares)||0)*(parseFloat(l.price)||0),0);
   const totalWithdrawnSummary=(withdrawals||[]).reduce((s,w)=>s+(parseFloat(w.amount)||0),0);
   const committed=cspCollat+assignedCost+longCost;
@@ -2077,7 +2104,7 @@ function _renderSummaryInner(container){
     <div class="sum-kpi-grid">
       <div class="sum-kpi"><div class="sum-kpi-label">Premium Collected</div><div class="sum-kpi-val tg">${fm(premiumInRange)}</div><div class="sum-kpi-sub">in period</div></div>
       <div class="sum-kpi"><div class="sum-kpi-label">Realized P&L</div><div class="sum-kpi-val ${realizedInRange>=0?'tg':'tr'}">${fm(realizedInRange)}</div><div class="sum-kpi-sub">${closedInRange.length} trades</div></div>
-      <div class="sum-kpi"><div class="sum-kpi-label">Win Rate</div><div class="sum-kpi-val">${winRate!=null?winRate.toFixed(0)+'%':'—'}</div><div class="sum-kpi-sub">${winsInRange}/${closedInRange.length} winners</div></div>
+      <div class="sum-kpi"><div class="sum-kpi-label">Share Gains (Called Away)</div><div class="sum-kpi-val ${shareApprInRange>=0?'tg':'tr'}">${fm(shareApprInRange)}</div><div class="sum-kpi-sub">${fm(shareApprAllTime)} all-time</div></div>
       <div class="sum-kpi"><div class="sum-kpi-label">Contracts</div><div class="sum-kpi-val">${contractsInRange}</div><div class="sum-kpi-sub">Ks closed</div></div>
       <div class="sum-kpi"><div class="sum-kpi-label">Assignments</div><div class="sum-kpi-val ${assignedInRange>0?'ta':''}">${assignedInRange}</div><div class="sum-kpi-sub">in period</div></div>
       <div class="sum-kpi"><div class="sum-kpi-label">Avg Prem / Trade</div><div class="sum-kpi-val">${fm(avgPremPerTrade)}</div><div class="sum-kpi-sub">net of fees</div></div>
