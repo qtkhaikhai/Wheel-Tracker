@@ -631,6 +631,7 @@ tbody td{padding:10px 13px;white-space:nowrap;}
     <button onclick="showPanel('positions',this)">Positions</button>
     <button onclick="showPanel('long',this)">Long</button>
     <button onclick="showPanel('pnl',this)">P&amp;L</button>
+    <button onclick="showPanel('goal',this)">Goal</button>
     <button onclick="showPanel('settings',this)">Settings</button>
     <button onclick="showPanel('reports',this)">Reports</button>
   </nav>
@@ -713,6 +714,11 @@ tbody td{padding:10px 13px;white-space:nowrap;}
     <div class="sec-hdr"><span class="sec-title">Trade Stats</span></div>
     <div class="stat-grid" style="grid-template-columns:repeat(4,1fr);" id="trade-stat-grid"></div>
     <div id="pnl-stock-breakdown" style="margin-top:20px;"></div>
+  </div>
+
+  <!-- GOAL (savings target projection) -->
+  <div class="panel" id="panel-goal">
+    <div id="goal-content"></div>
   </div>
 
   <!-- SETTINGS -->
@@ -4653,6 +4659,166 @@ function renderDerived(){
 }
 
 // ═══════════════════════════════════════
+//  GOAL — savings target projection
+// ═══════════════════════════════════════
+function _goalLiveBalance(){
+  const s=getStats();
+  const w=(withdrawals||[]).reduce((a,x)=>a+(parseFloat(x.amount)||0),0);
+  return getCapital()+s.realized-w;
+}
+function _goalPersist(){
+  const _pid=_activeProfile?_activeProfile.id:'default';
+  localStorage.setItem('wt_settings_'+_pid,JSON.stringify(settings));
+  _scheduleDriveSave();
+}
+function _goalSim(P,monthly,annualRate,goal,maxMonths){
+  const i=annualRate/100/12; let b=P; const yearly=[b]; let crossing=-1;
+  for(let m=1;m<=maxMonths;m++){
+    b=b*(1+i)+monthly;
+    if(crossing<0 && b>=goal) crossing=m;
+    if(m%12===0) yearly.push(b);
+  }
+  return {yearly,crossing,final:b};
+}
+function _goalYrs(m){ if(m<0) return 'Not reached'; const y=Math.floor(m/12), mo=m%12; if(y===0) return mo+' mo'; return y+'y'+(mo?' '+mo+'m':''); }
+function _goalDate(m){ if(m<0) return '—'; const d=new Date(); d.setMonth(d.getMonth()+m); return d.toLocaleDateString('en-US',{month:'short',year:'numeric'}); }
+
+function goalEdit(key,val){
+  if(key==='bal'){ settings.goalBalanceMode='manual'; settings.goalBalance=parseFloat(val)||0; }
+  else { settings[key]=parseFloat(val)||0; }
+  _goalPersist();
+  goalRecompute();
+}
+function goalSyncLive(){
+  settings.goalBalanceMode='live';
+  delete settings.goalBalance;
+  _goalPersist();
+  renderGoal();
+}
+
+function renderGoal(){
+  if(settings.goalAmount==null) settings.goalAmount=250000;
+  if(settings.goalDeposit==null) settings.goalDeposit=200;
+  if(settings.goalReturn==null) settings.goalReturn=7;
+  if(settings.goalAccDeposit==null) settings.goalAccDeposit=500;
+  if(settings.goalAccReturn==null) settings.goalAccReturn=9;
+  if(!settings.goalBalanceMode) settings.goalBalanceMode='live';
+  const live=_goalLiveBalance();
+  const isManual=settings.goalBalanceMode==='manual'&&settings.goalBalance!=null;
+  const bal=isManual?settings.goalBalance:live;
+
+  const inp='width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:13px;padding:7px 10px;outline:none;box-sizing:border-box;';
+  const lbl='font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--text3);margin-bottom:4px;font-weight:500;';
+
+  const balCap=isManual
+    ? `Manual override · <span style="color:var(--green);cursor:pointer;" onclick="goalSyncLive()">↻ Sync to live (${fm(live)})</span>`
+    : `Auto-synced from portfolio · ${fm(live)}`;
+
+  const gc=document.getElementById('goal-content');
+  gc.innerHTML=`
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:18px;">
+    <div style="background:var(--surface2);padding:10px 16px;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3);font-weight:500;border-bottom:1px solid var(--border);">Goal Projection</div>
+    <div style="padding:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;">
+      <div><div style="${lbl}">Goal amount ($)</div><input style="${inp}" type="number" step="1000" id="g-goal" value="${settings.goalAmount}" oninput="goalEdit('goalAmount',this.value)"/></div>
+      <div><div style="${lbl}">Current balance ($)</div><input style="${inp}" type="number" step="1000" id="g-bal" value="${Math.round(bal)}" oninput="goalEdit('bal',this.value)"/><div id="g-bal-cap" style="font-size:9px;color:var(--text3);margin-top:4px;">${balCap}</div></div>
+      <div><div style="${lbl}">Monthly deposit ($)</div><input style="${inp}" type="number" step="50" id="g-dep" value="${settings.goalDeposit}" oninput="goalEdit('goalDeposit',this.value)"/></div>
+      <div><div style="${lbl}">Annual return (%)</div><input style="${inp}" type="number" step="0.5" id="g-ret" value="${settings.goalReturn}" oninput="goalEdit('goalReturn',this.value)"/></div>
+      <div><div style="${lbl}">Accelerated deposit ($)</div><input style="${inp}" type="number" step="50" id="g-adep" value="${settings.goalAccDeposit}" oninput="goalEdit('goalAccDeposit',this.value)"/></div>
+      <div><div style="${lbl}">Accelerated return (%)</div><input style="${inp}" type="number" step="0.5" id="g-aret" value="${settings.goalAccReturn}" oninput="goalEdit('goalAccReturn',this.value)"/></div>
+    </div>
+  </div>
+  <div id="goal-headline" style="font-family:var(--sans);font-size:15px;color:var(--text2);margin-bottom:16px;line-height:1.5;"></div>
+  <div id="goal-results" style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:18px;"></div>
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px 20px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
+      <span style="font-family:var(--sans);font-size:12px;font-weight:600;color:var(--text2);letter-spacing:.06em;text-transform:uppercase;">Path to Goal</span>
+      <div style="display:flex;flex-wrap:wrap;gap:14px;font-size:10px;color:var(--text2);">
+        <span style="display:flex;align-items:center;gap:5px;"><span style="width:14px;height:2px;background:var(--text2);display:inline-block;"></span>Growth only</span>
+        <span style="display:flex;align-items:center;gap:5px;"><span style="width:14px;height:2px;background:var(--green);display:inline-block;"></span>Your plan</span>
+        <span style="display:flex;align-items:center;gap:5px;"><span style="width:14px;height:2px;background:var(--blue);display:inline-block;"></span>Accelerated</span>
+        <span style="display:flex;align-items:center;gap:5px;"><span style="width:14px;border-top:2px dashed var(--red);display:inline-block;"></span>Goal</span>
+      </div>
+    </div>
+    <div id="goal-chart"></div>
+  </div>`;
+  goalRecompute();
+}
+
+function goalRecompute(){
+  const goal=+document.getElementById('g-goal').value||0;
+  const bal=+document.getElementById('g-bal').value||0;
+  const dep=+document.getElementById('g-dep').value||0;
+  const ret=+document.getElementById('g-ret').value||0;
+  const adep=+document.getElementById('g-adep').value||0;
+  const aret=+document.getElementById('g-aret').value||0;
+  const MAX=600;
+
+  const g=_goalSim(bal,0,ret,goal,MAX);
+  const p=_goalSim(bal,dep,ret,goal,MAX);
+  const a=_goalSim(bal,adep,aret,goal,MAX);
+
+  // headline
+  const hl=document.getElementById('goal-headline');
+  if(hl){
+    if(bal>=goal) hl.innerHTML=`You're already at your goal of <b style="color:var(--green);">${fm(goal)}</b>. Time to set a higher target.`;
+    else if(p.crossing>=0) hl.innerHTML=`At <b style="color:var(--text);">${fm(dep)}/mo</b> earning <b style="color:var(--text);">${ret}%</b>, you reach <b style="color:var(--green);">${fm(goal)}</b> in <b style="color:var(--green);">${_goalYrs(p.crossing)}</b> — around <b style="color:var(--text);">${_goalDate(p.crossing)}</b>.`;
+    else hl.innerHTML=`At <b style="color:var(--text);">${fm(dep)}/mo</b> earning <b style="color:var(--text);">${ret}%</b>, you don't reach <b>${fm(goal)}</b> within 50 years. Try raising the deposit or return.`;
+  }
+
+  // result cards
+  let accSub;
+  if(a.crossing>=0&&p.crossing>=0){
+    const diff=p.crossing-a.crossing;
+    accSub=diff>0?(Math.round(diff/12*10)/10)+' yr sooner':_goalDate(a.crossing);
+  } else accSub=a.crossing>=0?_goalDate(a.crossing):'not reached';
+  const card=(accent,label,val,sub)=>`<div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid ${accent};border-radius:0 8px 8px 0;padding:14px 16px;">
+    <div style="font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--text3);margin-bottom:7px;">${label}</div>
+    <div style="font-family:var(--sans);font-size:22px;font-weight:700;letter-spacing:-0.5px;color:var(--text);">${val}</div>
+    <div style="font-size:10px;color:var(--text3);margin-top:4px;">${sub}</div></div>`;
+  document.getElementById('goal-results').innerHTML=
+    card('var(--text2)','Growth only',_goalYrs(g.crossing),g.crossing<0?'deposits off':_goalDate(g.crossing))+
+    card('var(--green)','Your plan',_goalYrs(p.crossing),p.crossing<0?'not on this path':_goalDate(p.crossing))+
+    card('var(--blue)','Accelerated',_goalYrs(a.crossing),accSub);
+
+  // chart
+  document.getElementById('goal-chart').innerHTML=_goalChartSVG(goal,bal,g,p,a);
+}
+
+function _goalChartSVG(goal,bal,g,p,a){
+  const crossMonths=[g.crossing,p.crossing,a.crossing].filter(c=>c>=0);
+  let horizon=crossMonths.length?Math.ceil(Math.max(...crossMonths)/12)+2:30;
+  horizon=Math.min(50,Math.max(5,horizon));
+  const W=920,H=280,pad={top:18,right:24,bottom:34,left:66};
+  const innerW=W-pad.left-pad.right, innerH=H-pad.top-pad.bottom;
+  const valAt=(sim,yr)=>sim.yearly[Math.min(yr,sim.yearly.length-1)];
+  let yMax=goal;
+  for(let yr=0;yr<=horizon;yr++) yMax=Math.max(yMax,valAt(g,yr),valAt(p,yr),valAt(a,yr));
+  yMax*=1.06;
+  const xOf=yr=>pad.left+(yr/horizon)*innerW;
+  const yOf=v=>pad.top+(1-(v/yMax))*innerH;
+  const line=sim=>{ let d=''; for(let yr=0;yr<=horizon;yr++) d+=(yr===0?'M':'L')+xOf(yr).toFixed(1)+' '+yOf(valAt(sim,yr)).toFixed(1)+' '; return d.trim(); };
+  // y gridlines
+  let yAxis='';
+  for(let k=0;k<=4;k++){ const v=yMax*k/4; const y=yOf(v); yAxis+=`<line x1="${pad.left}" y1="${y}" x2="${W-pad.right}" y2="${y}" stroke="var(--border)" stroke-width="1"/><text x="${pad.left-8}" y="${y+4}" text-anchor="end" font-size="10" fill="var(--text2)" font-family="DM Mono,monospace">${fm(v)}</text>`; }
+  // x labels
+  const step=horizon<=10?2:horizon<=24?5:10;
+  let xAxis='';
+  for(let yr=0;yr<=horizon;yr+=step){ xAxis+=`<text x="${xOf(yr)}" y="${H-10}" text-anchor="middle" font-size="10" fill="var(--text2)" font-family="DM Mono,monospace">${yr}y</text>`; }
+  // goal line
+  const gy=yOf(goal);
+  const goalLine=`<line x1="${pad.left}" y1="${gy}" x2="${W-pad.right}" y2="${gy}" stroke="var(--red)" stroke-width="1.5" stroke-dasharray="6 4"/>`;
+  // crossing markers
+  const mark=(sim,col)=>{ if(sim.crossing<0||sim.crossing/12>horizon) return ''; const x=xOf(sim.crossing/12); return `<circle cx="${x.toFixed(1)}" cy="${gy.toFixed(1)}" r="4" fill="${col}" stroke="var(--surface)" stroke-width="1.5"/>`; };
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" style="width:100%;height:280px;">
+    ${yAxis}${xAxis}${goalLine}
+    <path d="${line(g)}" fill="none" stroke="var(--text2)" stroke-width="2"/>
+    <path d="${line(a)}" fill="none" stroke="var(--blue)" stroke-width="2"/>
+    <path d="${line(p)}" fill="none" stroke="var(--green)" stroke-width="2.5"/>
+    ${mark(g,'var(--text2)')}${mark(a,'var(--blue)')}${mark(p,'var(--green)')}
+  </svg>`;
+}
+
+// ═══════════════════════════════════════
 //  NAV
 // ═══════════════════════════════════════
 function showPanel(id,btn){
@@ -4663,6 +4829,7 @@ function showPanel(id,btn){
   if(id==='settings') renderSettings();
   else if(id==='summary'){ renderSummary(); }
   else if(id==='reports') renderReports();
+  else if(id==='goal') renderGoal();
   else if(id!=='log') renderDerived();
 }
 
