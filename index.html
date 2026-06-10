@@ -2038,8 +2038,8 @@ function _renderSummaryInner(container){
   const longCost=longs.filter(l=>!l.calledAway).reduce((s,l)=>s+(parseFloat(l.shares)||0)*(parseFloat(l.price)||0),0);
   const totalWithdrawnSummary=(withdrawals||[]).reduce((s,w)=>s+(parseFloat(w.amount)||0),0);
   const committed=cspCollat+assignedCost+longCost;
-  // cashOnHand matches Dashboard: (capital + realized) - committed - withdrawals
-  const cashOnHand=(cap+closedAll.reduce((s,t)=>s+(calcPL(t)||0),0))-committed-totalWithdrawnSummary;
+  // cashOnHand matches Dashboard: (capital + realized option P&L + realized share gains) - committed - withdrawals
+  const cashOnHand=(cap+closedAll.reduce((s,t)=>s+(calcPL(t)||0),0)+shareApprAllTime)-committed-totalWithdrawnSummary;
   const buyingPower=Math.max(0,cap-committed);
   const bpUtil=cap>0?committed/cap*100:0;
   const cashSecuredPct=cap>0?cspCollat/cap*100:0;
@@ -2055,13 +2055,16 @@ function _renderSummaryInner(container){
       unrealizedShares+=(parseFloat(cp)-avgBasis)*inv[tk].shares;
     }
   });
-  const portValue=cap+totalRealizedAllTime+unrealizedShares-totalWithdrawnSummary;
+  const portValue=cap+totalRealizedAllTime+shareApprAllTime+unrealizedShares-totalWithdrawnSummary;
   // monthly income = closed last 30d
   const last30Cutoff=new Date(Date.now()-30*86400e3);
   const monthlyIncome=closedAll.filter(t=>{const c=cd(t); return c&&new Date(c)>=last30Cutoff;}).reduce((s,t)=>s+(calcPL(t)||0),0);
 
-  // annualized return for the selected period
-  const periodReturn=cap>0?(realizedInRange/cap)*(365/rngDays)*100:null;
+  // total income for the period = realized option P&L + realized share appreciation (called away)
+  const incomeInRange=realizedInRange+shareApprInRange;
+
+  // annualized return for the selected period (based on total income)
+  const periodReturn=cap>0?(incomeInRange/cap)*(365/rngDays)*100:null;
 
   // ──────── HERO
   const hero=`
@@ -2082,7 +2085,7 @@ function _renderSummaryInner(container){
         </div>
         <div>
           <div class="sum-hero-stat-label">${({week:'Week',month:'Month',quarter:'Quarter',ytd:'YTD',all:'All-Time'})[summaryRange]} Income</div>
-          <div class="sum-hero-stat-val ${realizedInRange>=0?'tg':'tr'}">${realizedInRange>=0?'+':''}${fm(realizedInRange)}</div>
+          <div class="sum-hero-stat-val ${incomeInRange>=0?'tg':'tr'}">${incomeInRange>=0?'+':''}${fm(incomeInRange)}</div>
         </div>
         <div>
           <div class="sum-hero-stat-label">Annualized Return (${summaryRange.toUpperCase()})</div>
