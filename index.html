@@ -4546,45 +4546,38 @@ function renderPnL(){
   const avgDays=cl.length?Math.round(cl.reduce((s,t)=>s+ddays(t.openDate,cd(t)),0)/cl.length):null;
   const totalFees=trades.reduce((s,t)=>s+(parseFloat(t.openFees)||0)+(parseFloat(t.closeFees)||0),0);
 
-  // share appreciation from called-away lots
-  const invCA={};
-  trades.filter(t=>t.type==='P'&&t.assigned==='Yes'&&t.ticker).forEach(t=>{
-    const k=t.ticker;
-    if(!invCA[k]) invCA[k]={lots:[],calledAway:[]};
-    const shares=(parseInt(t.contracts)||1)*100;
-    const strike=parseFloat(t.strike)||0;
-    const premiumPut=(parseFloat(t.premium)||0)*(parseInt(t.contracts)||1)*100;
-    const openFees=parseFloat(t.openFees)||0;
-    const costBasis=strike-(premiumPut-openFees)/shares;
-    invCA[k].lots.push({shares,strike,costBasis,premiumPut,openFees,id:t.id});
-  });
-  trades.filter(t=>t.type==='C'&&t.assigned==='Yes'&&t.ticker&&invCA[t.ticker]).forEach(t=>{
-    const k=t.ticker;
-    const callStrike=parseFloat(t.strike)||0;
-    const premiumCall=(parseFloat(t.premium)||0)*(parseInt(t.contracts)||1)*100;
-    const callFees=(parseFloat(t.openFees)||0)+(parseFloat(t.closeFees)||0);
-    let toRemove=(parseInt(t.contracts)||1)*100;
-    invCA[k].lots=[...invCA[k].lots].map(lot=>{
-      if(toRemove<=0) return lot;
-      if(lot.shares<=toRemove){
-        invCA[k].calledAway.push({...lot,callStrike,premiumCall,callFees});
-        toRemove-=lot.shares; return null;
-      } else {
-        invCA[k].calledAway.push({...lot,shares:toRemove,callStrike,premiumCall,callFees});
-        toRemove=0; return {...lot,shares:lot.shares-toRemove};
+  // share appreciation realized when covered calls are assigned (shares called away)
+  // Kept consistent with the Dashboard "Share Gains (Called Away)": running per-ticker
+  // average-cost inventory, cost basis = put strike (premium is already in Realized P&L),
+  // and capital losses (called away below cost) are included rather than floored at zero.
+  const _apprInv={}; // per-ticker running inventory {shares, cost}
+  let totalShareAppreciation=0, calledAwayCount=0;
+  trades.filter(t=>t.assigned==='Yes'&&cd(t))
+    .slice()
+    .sort((a,b)=>new Date(cd(a))-new Date(cd(b)))
+    .forEach(t=>{
+      const sh=(parseInt(t.contracts)||1)*100;
+      const strike=parseFloat(t.strike)||0;
+      if(!_apprInv[t.ticker]) _apprInv[t.ticker]={shares:0,cost:0};
+      const pos=_apprInv[t.ticker];
+      if(t.type==='P'){
+        pos.shares+=sh; pos.cost+=strike*sh;           // shares acquired at put strike
+      } else if(t.type==='C' && pos.shares>0){
+        const sold=Math.min(sh,pos.shares);
+        const avgCost=pos.cost/pos.shares;
+        totalShareAppreciation+=(strike-avgCost)*sold;  // capital gain/loss on called-away shares
+        calledAwayCount++;
+        pos.cost-=avgCost*sold; pos.shares-=sold;
+        if(pos.shares<=0){ pos.shares=0; pos.cost=0; }
       }
-    }).filter(Boolean);
-  });
-  const allCalledAway=Object.values(invCA).flatMap(g=>g.calledAway);
-  const totalShareAppreciation=allCalledAway.reduce((s,l)=>s+(callStrike=>callStrike>l.costBasis?(callStrike-l.costBasis)*l.shares:0)(l.callStrike),0);
-  const calledAwayCount=allCalledAway.length;
+    });
 
   document.getElementById('pnl-stat-grid').innerHTML=`
     <div class="stat-card"><div class="stat-label">Total Realized</div><div class="stat-val ${s.realized>=0?'g':'r'}">${fm(s.realized)}</div><div class="stat-sub">${cl.length} closed</div></div>
     <div class="stat-card"><div class="stat-label">Avg AR%</div><div class="stat-val a">${fp(avgAR)}</div></div>
     <div class="stat-card"><div class="stat-label">Avg Days Held</div><div class="stat-val">${avgDays!=null?avgDays+'d':'—'}</div></div>
     <div class="stat-card"><div class="stat-label">Total Fees</div><div class="stat-val r">${fm(totalFees)}</div></div>
-    <div class="stat-card" style="grid-column:span 2;"><div class="stat-label">Share Appreciation (Called Away)</div><div class="stat-val ${totalShareAppreciation>=0?'g':'r'}">${fm(totalShareAppreciation)}</div><div class="stat-sub">${calledAwayCount} lot${calledAwayCount!==1?'s':''} called above cost basis · profit from CC assignment above cost</div></div>`;
+    <div class="stat-card" style="grid-column:span 2;"><div class="stat-label">Share Appreciation (Called Away)</div><div class="stat-val ${totalShareAppreciation>=0?'g':'r'}">${fm(totalShareAppreciation)}</div><div class="stat-sub">${calledAwayCount} lot${calledAwayCount!==1?'s':''} called away · capital gain vs. strike cost basis (premium counted in Realized P&L)</div></div>`;
   renderMonthly('pnl-monthly');
   renderTickerTable();
   const puts=trades.filter(t=>t.type==='P'),calls=trades.filter(t=>t.type==='C');
