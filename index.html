@@ -4171,7 +4171,7 @@ function renderLong(){
   const totalShares=activeLongs.reduce((s,l)=>s+(parseFloat(l.shares)||0),0);
   const calledAwayCount=longs.filter(l=>l.calledAway).length;
   const totalWithdrawn=(withdrawals||[]).reduce((s,w)=>s+(parseFloat(w.amount)||0),0);
-  const netCost=totalCost-totalWithdrawn;
+  const netCost=getCapital()-totalWithdrawn;
 
   // summary stats
   const stats=longs.length?`
@@ -4180,7 +4180,7 @@ function renderLong(){
       <div class="stat-card"><div class="stat-label">Total Shares</div><div class="stat-val">${totalShares.toLocaleString()}</div></div>
       <div class="stat-card"><div class="stat-label">Total Cost Basis</div><div class="stat-val r">${fm(totalCost)}</div></div>
       <div class="stat-card"><div class="stat-label">Total Withdrawn</div><div class="stat-val a">${fm(totalWithdrawn)}</div></div>
-      <div class="stat-card"><div class="stat-label">Net Account Amount</div><div class="stat-val ${netCost>=0?'r':'g'}">${fm(netCost)}</div></div>
+      <div class="stat-card"><div class="stat-label">Net Account Amount</div><div class="stat-val ${netCost>=0?'g':'r'}">${fm(netCost)}</div></div>
     </div>`:'';
 
   // editable table rows — sorted by date desc
