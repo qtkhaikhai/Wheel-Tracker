@@ -337,6 +337,12 @@ tbody td{padding:10px 13px;white-space:nowrap;}
 .settings-section-title{font-family:var(--sans);font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.1em;text-transform:uppercase;padding:12px 20px;background:var(--surface2);border-bottom:1px solid var(--border);}
 .settings-row{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:18px 20px;border-bottom:1px solid var(--border);}
 .settings-row:last-child{border-bottom:none;}
+.toggle-sw{position:relative;display:inline-block;width:44px;height:24px;cursor:pointer;flex-shrink:0;}
+.toggle-sw input{opacity:0;width:0;height:0;position:absolute;margin:0;}
+.toggle-sw .track{position:absolute;inset:0;background:var(--border2);border-radius:24px;transition:background .15s;}
+.toggle-sw .knob{position:absolute;top:3px;left:3px;width:18px;height:18px;background:var(--text2);border-radius:50%;transition:transform .15s,background .15s;}
+.toggle-sw input:checked + .track{background:var(--green);}
+.toggle-sw input:checked + .track + .knob{transform:translateX(20px);background:#000;}
 .settings-label{flex:1;}
 .settings-label-title{font-size:13px;color:var(--text);margin-bottom:4px;}
 .settings-label-sub{font-size:11px;color:var(--text3);line-height:1.5;}
@@ -628,6 +634,7 @@ tbody td{padding:10px 13px;white-space:nowrap;}
   <nav>
     <button class="active" onclick="showPanel('summary',this)">Dashboard</button>
     <button onclick="showPanel('log',this)">Log</button>
+    <button onclick="showPanel('analyze',this)">Analyze</button>
     <button onclick="showPanel('wheels',this)">Wheels</button>
     <button onclick="showPanel('positions',this)">Positions</button>
     <button onclick="showPanel('long',this)">Long</button>
@@ -704,6 +711,11 @@ tbody td{padding:10px 13px;white-space:nowrap;}
     <div id="long-content"></div>
   </div>
 
+  <!-- ANALYZE (pre-trade option analyzer) -->
+  <div class="panel" id="panel-analyze">
+    <div id="analyze-content"></div>
+  </div>
+
   <!-- P&L -->
   <div class="panel" id="panel-pnl">
     <div class="stat-grid" style="grid-template-columns:repeat(6,1fr);margin-bottom:20px;" id="pnl-stat-grid"></div>
@@ -756,8 +768,17 @@ tbody td{padding:10px 13px;white-space:nowrap;}
         <div class="settings-section-title">Google Drive Sync</div>
         <div class="settings-row">
           <div class="settings-label">
+            <div class="settings-label-title">Automatic saving</div>
+            <div class="settings-label-sub">When on, changes are saved to Google Drive a moment after each edit. Turn it off to save only when you click <b>↑ Save to Drive</b>. Your data is always kept locally in this browser either way.</div>
+          </div>
+          <div class="settings-control">
+            <label class="toggle-sw" title="Toggle automatic Drive saving"><input type="checkbox" id="setting-autosave" onchange="setAutoSave(this.checked)"><span class="track"></span><span class="knob"></span></label>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div class="settings-label">
             <div class="settings-label-title">Save to Drive</div>
-            <div class="settings-label-sub">Saves your data to <b>WheelTracker/wheel-data.json</b> in Google Drive. You'll be prompted to sign in with Google the first time. After that it saves automatically after every change.</div>
+            <div class="settings-label-sub">Saves your data to <b>WheelTracker/wheel-data.json</b> in Google Drive. You'll be prompted to sign in with Google the first time. This manual save works whether or not automatic saving is on.</div>
           </div>
           <div class="settings-control">
             <button class="settings-btn" onclick="forceSaveToDrive()">↑ Save to Drive</button>
@@ -1631,7 +1652,18 @@ async function _saveToDrive(){
   }
 }
 
+let _autoSaveEnabled = (function(){ try{ return localStorage.getItem('wt_autosave')!=='off'; }catch(e){ return true; } })();
+function setAutoSave(on){
+  _autoSaveEnabled=!!on;
+  try{ localStorage.setItem('wt_autosave', on?'on':'off'); }catch(e){}
+  if(!on && _driveSaveTimer){ clearTimeout(_driveSaveTimer); _driveSaveTimer=null; }
+  const elAS=document.getElementById('setting-autosave'); if(elAS) elAS.checked=_autoSaveEnabled;
+  try{ if(_driveReady) _setDriveStatus('idle', on?'↑ Save to Drive':'Auto-save off · ↑ Save'); }catch(e){}
+  showToast(on?'Auto-save to Drive enabled':'Auto-save off — save manually with ↑ Save to Drive', false);
+}
+
 function _scheduleDriveSave(){
+  if(!_autoSaveEnabled) return;
   if(_driveSaveTimer) clearTimeout(_driveSaveTimer);
   _driveSaveTimer=setTimeout(_saveToDrive,1800);
 }
@@ -1701,6 +1733,8 @@ function renderSettings(){
   if(el) el.value=settings.capital||75000;
   const elEW=document.getElementById('setting-exp-weeks');
   if(elEW) elEW.value=settings.expWeeks||8;
+  const elAS=document.getElementById('setting-autosave');
+  if(elAS) elAS.checked=_autoSaveEnabled;
   renderThemeSwitcher();
   // Update snapshot button label with timestamp if one exists
   const btn=document.getElementById('btn-restore-snapshot');
@@ -4861,6 +4895,7 @@ function showPanel(id,btn){
   else if(id==='summary'){ renderSummary(); }
   else if(id==='reports') renderReports();
   else if(id==='goal') renderGoal();
+  else if(id==='analyze') renderAnalyze();
   else if(id!=='log') renderDerived();
 }
 
@@ -6561,6 +6596,230 @@ function renderReports(){
   if(previewEl && defaultMonth){
     try { previewEl.innerHTML = _rptBuildPreview(defaultMonth, ''); } catch(e){ console.error('preview error', e); }
   }
+}
+
+// ═══════════════════════════════════════
+//  PRE-TRADE ANALYZER
+// ═══════════════════════════════════════
+var _anz = { ticker:'', type:'P', price:null, low52:null, high52:null,
+             expirations:[], chainByExp:{}, selectedExp:'', selectedStrike:'',
+             premium:'', iv:'', contracts:1, status:'', statusKind:'' };
+
+// cumulative standard normal (Abramowitz & Stegun 7.1.26)
+function _normCDF(x){
+  const t=1/(1+0.2316419*Math.abs(x));
+  const d=0.3989422804*Math.exp(-x*x/2);
+  let p=d*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.821256+t*1.330274))));
+  return x>0?1-p:p;
+}
+function _anzExpToDate(unixSec){ return new Date(unixSec*1000).toISOString().slice(0,10); }
+function _anzSetStatus(msg,kind){ _anz.status=msg; _anz.statusKind=kind||''; const el=document.getElementById('anz-status'); if(el){ el.textContent=msg; el.style.color=kind==='err'?'var(--red)':kind==='ok'?'var(--green)':'var(--text3)'; } }
+
+// ── Compute the eight decision metrics ──
+function _anzMetrics(){
+  const price=parseFloat(_anz.price)||0;
+  const strike=parseFloat(_anz.selectedStrike)||0;
+  const premium=parseFloat(_anz.premium)||0;
+  const contracts=Math.max(1, parseInt(_anz.contracts)||1);
+  const fees=0.65; // matches the schema's default openFees
+  const isPut=_anz.type==='P';
+  const dte=_anz.selectedExp?ddays(today(),_anz.selectedExp):0;
+  const cap=(isPut?strike:price)*100*contracts;
+  const grossPrem=premium*contracts*100;
+  const netPrem=grossPrem-fees;
+  const staticYield=cap>0?(grossPrem/cap)*100:null;
+  const arPct=(cap>0&&dte)?(netPrem/cap)*(365/dte)*100:null; // same form as calcARHeld()
+  const breakeven=isPut?(strike-premium):(price-premium);
+  const cushion=price>0?((price-breakeven)/price)*100:null;
+  const otm=price>0?((isPut?(price-strike):(strike-price))/price)*100:null;
+  let pAssign=null;
+  const iv=(parseFloat(_anz.iv)||0)/100, T=dte/365;
+  if(iv>0&&T>0&&price>0&&strike>0){
+    const d2=(Math.log(price/strike)+(-0.5*iv*iv)*T)/(iv*Math.sqrt(T));
+    pAssign=(isPut?_normCDF(-d2):_normCDF(d2))*100;
+  }
+  return {price,strike,premium,contracts,dte,cap,netPrem,staticYield,arPct,breakeven,cushion,otm,pAssign,isPut};
+}
+
+// ── Fetch the option chain from Yahoo (mirrors refreshYahooPrices) ──
+async function anzFetchChain(){
+  const tIn=document.getElementById('anz-ticker');
+  const ticker=((tIn&&tIn.value)||'').trim().toUpperCase();
+  if(!ticker){ _anzSetStatus('Enter a ticker first.','err'); return; }
+  _anz.ticker=ticker; _anz.selectedExp=''; _anz.selectedStrike=''; _anz.chainByExp={};
+  _anzSetStatus('Fetching chain…','');
+  try{
+    const url=`https://query1.finance.yahoo.com/v7/finance/options/${ticker}`;
+    const res=await fetch(url,{headers:{'Accept':'application/json'}});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const data=await res.json();
+    const r=data&&data.optionChain&&data.optionChain.result&&data.optionChain.result[0];
+    if(!r) throw new Error('No data');
+    const q=r.quote||{};
+    _anz.price=q.regularMarketPrice!=null?q.regularMarketPrice:(q.regularMarketPreviousClose!=null?q.regularMarketPreviousClose:null);
+    _anz.low52=q.fiftyTwoWeekLow!=null?q.fiftyTwoWeekLow:null;
+    _anz.high52=q.fiftyTwoWeekHigh!=null?q.fiftyTwoWeekHigh:null;
+    _anz.expirations=(r.expirationDates||[]).map(u=>({date:_anzExpToDate(u),unix:u}));
+    if(r.options&&r.options[0]){
+      const ed=_anzExpToDate(r.options[0].expirationDate);
+      _anz.chainByExp[ed]={puts:r.options[0].puts||[],calls:r.options[0].calls||[]};
+      _anz.selectedExp=ed;
+    } else if(_anz.expirations.length){ _anz.selectedExp=_anz.expirations[0].date; }
+    _anzSetStatus(`Loaded ${ticker} · $${(_anz.price||0).toFixed(2)}`,'ok');
+    await _anzEnsureChain(_anz.selectedExp);
+    _anzAutofill();
+    renderAnalyze();
+  }catch(e){
+    _anz.price=_anz.price||null;
+    _anzSetStatus("Couldn't fetch chain — enter strike, premium & IV manually.",'err');
+    renderAnalyze();
+  }
+}
+
+// ── Make sure a given expiry's chain is loaded ──
+async function _anzEnsureChain(expDate){
+  if(!expDate||_anz.chainByExp[expDate]) return;
+  const e=_anz.expirations.find(x=>x.date===expDate);
+  if(!e) return;
+  try{
+    const url=`https://query1.finance.yahoo.com/v7/finance/options/${_anz.ticker}?date=${e.unix}`;
+    const res=await fetch(url,{headers:{'Accept':'application/json'}});
+    if(!res.ok) throw 0;
+    const data=await res.json();
+    const o=data&&data.optionChain&&data.optionChain.result&&data.optionChain.result[0]&&data.optionChain.result[0].options&&data.optionChain.result[0].options[0];
+    if(o) _anz.chainByExp[expDate]={puts:o.puts||[],calls:o.calls||[]};
+  }catch(e){ /* falls through to manual */ }
+}
+
+// ── Auto-fill premium + IV from the chain for the chosen strike ──
+function _anzAutofill(){
+  const chain=_anz.chainByExp[_anz.selectedExp];
+  if(!chain) return;
+  const arr=_anz.type==='P'?chain.puts:chain.calls;
+  if(!arr||!arr.length) return;
+  if(!_anz.selectedStrike){
+    const price=parseFloat(_anz.price)||0; let best=null;
+    arr.forEach(c=>{ const k=Number(c.strike);
+      if(_anz.type==='P'?k<=price:k>=price){ if(best===null||Math.abs(k-price)<Math.abs(best-price)) best=k; }
+    });
+    if(best===null) best=Number(arr[Math.floor(arr.length/2)].strike);
+    _anz.selectedStrike=best;
+  }
+  const c=arr.find(x=>Number(x.strike)===Number(_anz.selectedStrike));
+  if(c){
+    const mid=(c.bid&&c.ask)?((c.bid+c.ask)/2):(c.lastPrice||0);
+    _anz.premium=(mid||c.lastPrice||0).toFixed(2);
+    if(c.impliedVolatility!=null) _anz.iv=(c.impliedVolatility*100).toFixed(1);
+  }
+}
+
+// ── Input event handlers ──
+function anzSetType(t){ _anz.type=t; _anz.selectedStrike=''; _anzAutofill(); renderAnalyze(); }
+async function anzSetExp(v){ _anz.selectedExp=v; _anz.selectedStrike=''; _anzSetStatus('Loading expiry…',''); await _anzEnsureChain(v); _anzAutofill(); _anzSetStatus(_anz.ticker?`Loaded ${_anz.ticker} · $${(_anz.price||0).toFixed(2)}`:'','ok'); renderAnalyze(); }
+function anzSetStrike(v){ _anz.selectedStrike=v; _anzAutofill(); renderAnalyze(); }
+function _anzReadManual(){
+  const g=id=>{ const el=document.getElementById(id); return el?el.value:undefined; };
+  const p=g('anz-price'); if(p!==undefined) _anz.price=p;
+  const k=g('anz-strike-inp'); if(k!==undefined) _anz.selectedStrike=k;
+  const e=g('anz-exp-inp'); if(e!==undefined) _anz.selectedExp=e;
+  const pr=g('anz-prem'); if(pr!==undefined) _anz.premium=pr;
+  const iv=g('anz-iv'); if(iv!==undefined) _anz.iv=iv;
+  const ct=g('anz-contracts'); if(ct!==undefined) _anz.contracts=ct;
+}
+function anzUpdate(){ _anzReadManual(); _anzRenderMetrics(); }
+
+// ── Render just the metric cards (keeps focus while typing) ──
+function _anzRenderMetrics(){
+  const wrap=document.getElementById('anz-metrics'); if(!wrap) return;
+  const m=_anzMetrics();
+  const card=(label,val,cls)=>`<div class="stat-card"><div class="stat-label">${label}</div><div class="stat-val ${cls||''}" style="font-size:20px;">${val}</div></div>`;
+  const pct=v=>v==null?'—':v.toFixed(v>=100?0:2)+'%';
+  const cur=v=>v==null?'—':'$'+Number(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+  wrap.innerHTML=
+    card('Capital required',cur(m.cap))+
+    card('Net premium',cur(m.netPrem),'g')+
+    card('Static yield',pct(m.staticYield))+
+    card(m.dte?('Annualized ('+m.dte+'d)'):'Annualized',pct(m.arPct),'g')+
+    card('Break-even',cur(m.breakeven))+
+    card('Downside cushion',pct(m.cushion))+
+    card(m.isPut?'% out-of-money':'% out-of-money',pct(m.otm))+
+    card(m.isPut?'Est. assignment':'Est. called-away',pct(m.pAssign),'a');
+}
+
+// ── Render the whole tab ──
+function renderAnalyze(){
+  const c=document.getElementById('analyze-content'); if(!c) return;
+  const hasChain=!!_anz.chainByExp[_anz.selectedExp];
+  const lbl='font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--text3);margin-bottom:4px;font-weight:500;';
+  const inp='width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:12px;padding:7px 10px;outline:none;box-sizing:border-box;';
+  const fld='padding:0 0 12px;';
+
+  // expiry control: dropdown if we have the list, else date input
+  let expCtl;
+  if(_anz.expirations.length){
+    expCtl=`<select style="${inp};cursor:pointer;" onchange="anzSetExp(this.value)">`+
+      _anz.expirations.map(e=>`<option value="${e.date}"${e.date===_anz.selectedExp?' selected':''}>${e.date} (${ddays(today(),e.date)}d)</option>`).join('')+`</select>`;
+  } else {
+    expCtl=`<input id="anz-exp-inp" type="date" value="${_anz.selectedExp||''}" style="${inp}" oninput="anzUpdate()"/>`;
+  }
+
+  // strike control: dropdown from chain if loaded, else number input
+  let strikeCtl;
+  if(hasChain){
+    const arr=_anz.type==='P'?_anz.chainByExp[_anz.selectedExp].puts:_anz.chainByExp[_anz.selectedExp].calls;
+    const strikes=[...new Set((arr||[]).map(x=>Number(x.strike)))].sort((a,b)=>a-b);
+    strikeCtl=`<select style="${inp};cursor:pointer;" onchange="anzSetStrike(this.value)">`+
+      `<option value="">Select strike…</option>`+
+      strikes.map(s=>`<option value="${s}"${Number(s)===Number(_anz.selectedStrike)?' selected':''}>$${s}</option>`).join('')+`</select>`;
+  } else {
+    strikeCtl=`<input id="anz-strike-inp" type="number" step="0.5" value="${_anz.selectedStrike||''}" placeholder="65" style="${inp}" oninput="anzUpdate()"/>`;
+  }
+
+  const priceCtl=hasChain
+    ? `<div style="${inp};background:var(--surface);">${_anz.price!=null?'$'+Number(_anz.price).toFixed(2):'—'}</div>`
+    : `<input id="anz-price" type="number" step="0.01" value="${_anz.price!=null?_anz.price:''}" placeholder="68.50" style="${inp}" oninput="anzUpdate()"/>`;
+
+  const rng=(_anz.low52!=null&&_anz.high52!=null)?`$${_anz.low52.toFixed(0)} – $${_anz.high52.toFixed(0)}`:'—';
+  const tBtn=(t,txt)=>`<button onclick="anzSetType('${t}')" class="${_anz.type===t?'btn-primary':'btn-ghost'}" style="flex:1;padding:7px 0;">${txt}</button>`;
+
+  c.innerHTML=`
+    <div class="sec-hdr">
+      <span class="sec-title">Pre-Trade Analyzer</span>
+      <span class="td" style="font-size:11px;">Research a candidate option before you log it</span>
+    </div>
+
+    <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px;">
+      <div style="flex:0 0 140px;">
+        <div style="${lbl}">Ticker</div>
+        <input id="anz-ticker" type="text" value="${_anz.ticker||''}" placeholder="KO" style="${inp};text-transform:uppercase;font-family:var(--sans);font-weight:700;" onkeydown="if(event.key==='Enter')anzFetchChain()"/>
+      </div>
+      <button class="btn-primary" style="padding:8px 16px;" onclick="anzFetchChain()">⟳ Fetch chain</button>
+      <span id="anz-status" class="td" style="font-size:11px;${_anz.statusKind==='err'?'color:var(--red);':_anz.statusKind==='ok'?'color:var(--green);':''}">${_anz.status||''}</span>
+    </div>
+
+    <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;">
+      <div style="flex:0 0 230px;min-width:210px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;">
+        <div style="${fld}"><div style="${lbl}">Type</div><div style="display:flex;gap:6px;">${tBtn('P','Put')}${tBtn('C','Call')}</div></div>
+        <div style="${fld}"><div style="${lbl}">Underlying price</div>${priceCtl}</div>
+        <div style="${fld}"><div style="${lbl}">Expiry</div>${expCtl}</div>
+        <div style="${fld}"><div style="${lbl}">Strike</div>${strikeCtl}</div>
+        <div style="${fld}"><div style="${lbl}">Contracts</div><input id="anz-contracts" type="number" min="1" step="1" value="${_anz.contracts||1}" style="${inp}" oninput="anzUpdate()"/></div>
+        <div style="${fld}"><div style="${lbl}">Premium ${hasChain?'<span style="text-transform:none;letter-spacing:0;color:var(--text3);">· auto from chain, editable</span>':''}</div><input id="anz-prem" type="number" step="0.01" value="${_anz.premium||''}" placeholder="0.95" style="${inp}" oninput="anzUpdate()"/></div>
+        <div style="padding:0;"><div style="${lbl}">Implied volatility (%)</div><input id="anz-iv" type="number" step="0.1" value="${_anz.iv||''}" placeholder="19" style="${inp}" oninput="anzUpdate()"/></div>
+      </div>
+
+      <div style="flex:1;min-width:280px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;font-size:11px;color:var(--text3);">
+          <span>52-week range: <span style="color:var(--text2);">${rng}</span></span>
+        </div>
+        <div class="stat-grid" id="anz-metrics" style="grid-template-columns:repeat(4,1fr);"></div>
+        <div class="td" style="font-size:10px;margin-top:10px;line-height:1.5;">
+          Annualized return uses the same formula as your closed-trade AR%. Assignment estimate is derived from implied volatility (lognormal P of finishing in-the-money) — an approximation, not a guarantee. This tool computes numbers; it doesn't recommend trades.
+        </div>
+      </div>
+    </div>`;
+
+  _anzRenderMetrics();
 }
 
 </script>
