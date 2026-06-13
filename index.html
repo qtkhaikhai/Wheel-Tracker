@@ -183,8 +183,9 @@ tbody td{padding:10px 13px;white-space:nowrap;}
 .log-table tr.new-row .row-num{background:var(--surface2);}
 .add-row-btn{
   width:100%;padding:9px;text-align:left;padding-left:52px;
-  background:none;border:none;color:var(--text3);font-family:var(--mono);font-size:12px;cursor:pointer;
-  transition:all .15s;
+  background:var(--surface);border:none;border-top:1px solid var(--border);color:var(--text3);font-family:var(--mono);font-size:12px;cursor:pointer;
+  transition:color .15s, background .15s;
+  position:sticky;bottom:0;z-index:15;
 }
 .add-row-btn:hover{color:var(--green);background:var(--green-dim);}
 
