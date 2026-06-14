@@ -6654,7 +6654,9 @@ function renderReports(){
 // ═══════════════════════════════════════
 var _anz = { ticker:'', type:'P', price:null, low52:null, high52:null,
              expirations:[], chainByExp:{}, selectedExp:'', selectedStrike:'',
-             premium:'', iv:'', delta:null, contracts:1, strikeCount:20, status:'', statusKind:'' };
+             premium:'', iv:'', delta:null, contracts:1, strikeCount:20,
+             cols:(function(){ try{ const s=localStorage.getItem('wt_anz_cols'); if(s){ const a=JSON.parse(s); if(Array.isArray(a)) return a; } }catch(e){} return ['last','delta','probItm']; })(),
+             colsOpen:false, status:'', statusKind:'' };
 
 // ── Tradier market-data access (via your Cloudflare Worker proxy) ──
 function _tradierProxy(){ try{ return (localStorage.getItem('wt_tradier_proxy')||'').trim().replace(/\/+$/,''); }catch(e){ return ''; } }
@@ -6751,7 +6753,9 @@ async function _anzEnsureChain(expDate){
       const g=c.greeks||{};
       const row={ strike:Number(c.strike), bid:c.bid, ask:c.ask, lastPrice:c.last,
         impliedVolatility:(g.mid_iv!=null?g.mid_iv:(g.smv_vol!=null?g.smv_vol:null)),
-        delta:(g.delta!=null?g.delta:null), oi:c.open_interest };
+        delta:(g.delta!=null?g.delta:null),
+        gamma:(g.gamma!=null?g.gamma:null), theta:(g.theta!=null?g.theta:null), vega:(g.vega!=null?g.vega:null),
+        oi:c.open_interest, volume:c.volume };
       (c.option_type==='put'?puts:calls).push(row);
     });
     _anz.chainByExp[expDate]={puts,calls};
@@ -6782,6 +6786,58 @@ function _anzAutofill(){
 }
 
 // ── Strike ladder (thinkorswim-style) ──
+// Available ladder columns (display order = this order). Strike is always shown.
+const ANZ_ALL_COLS=[
+  {key:'last',   h:'Last',    label:'Last paid'},
+  {key:'delta',  h:'Δ',       label:'Delta'},
+  {key:'probItm',h:'Prob ITM',label:'Prob ITM'},
+  {key:'bid',    h:'Bid',     label:'Bid'},
+  {key:'ask',    h:'Ask',     label:'Ask'},
+  {key:'mid',    h:'Mid',     label:'Mid'},
+  {key:'iv',     h:'IV%',     label:'IV %'},
+  {key:'gamma',  h:'Γ',       label:'Gamma'},
+  {key:'theta',  h:'Θ',       label:'Theta'},
+  {key:'vega',   h:'Vega',    label:'Vega'},
+  {key:'oi',     h:'OI',      label:'Open int'},
+  {key:'vol',    h:'Vol',     label:'Volume'},
+  {key:'otm',    h:'% OTM',   label:'% OTM'},
+];
+function anzToggleCol(key){
+  const i=_anz.cols.indexOf(key);
+  if(i>=0) _anz.cols.splice(i,1); else _anz.cols.push(key);
+  try{ localStorage.setItem('wt_anz_cols', JSON.stringify(_anz.cols)); }catch(e){}
+  renderAnalyze();
+}
+function anzToggleColsPanel(){ _anz.colsOpen=!_anz.colsOpen; renderAnalyze(); }
+function _anzProbItm(o,price,isPut){
+  if(o.delta!=null && !isNaN(o.delta)) return Math.round(Math.min(100,Math.abs(o.delta)*100))+'%';
+  const iv=o.impliedVolatility, dte=ddays(today(),_anz.selectedExp), T=dte/365;
+  if(iv>0&&T>0&&price>0&&o.strike>0){
+    const d2=(Math.log(price/o.strike)+(-0.5*iv*iv)*T)/(iv*Math.sqrt(T));
+    return Math.round((isPut?_normCDF(-d2):_normCDF(d2))*100)+'%';
+  }
+  return '—';
+}
+function _anzCell(key,o,price,isPut){
+  const f=(x,d)=>(x==null||isNaN(x))?'—':Number(x).toFixed(d==null?2:d);
+  const mid=(o.bid&&o.ask)?((o.bid+o.ask)/2):(o.lastPrice||0);
+  switch(key){
+    case 'bid': return f(o.bid);
+    case 'ask': return f(o.ask);
+    case 'mid': return f(mid);
+    case 'last': return f(o.lastPrice);
+    case 'iv': return o.impliedVolatility==null?'—':f(o.impliedVolatility*100,1);
+    case 'delta': return o.delta==null?'—':f(o.delta,2);
+    case 'gamma': return o.gamma==null?'—':f(o.gamma,3);
+    case 'theta': return o.theta==null?'—':f(o.theta,3);
+    case 'vega': return o.vega==null?'—':f(o.vega,3);
+    case 'oi': return o.oi!=null?o.oi:'—';
+    case 'vol': return o.volume!=null?o.volume:'—';
+    case 'probItm': return _anzProbItm(o,price,isPut);
+    case 'otm': return price?f((isPut?(price-o.strike):(o.strike-price))/price*100,1)+'%':'—';
+    default: return '—';
+  }
+}
 function anzSetStrikeCount(n){ _anz.strikeCount=n; renderAnalyze(); }
 function _anzVisibleStrikes(){
   const chain=_anz.chainByExp[_anz.selectedExp];
@@ -6802,21 +6858,18 @@ function _anzLadderHTML(){
   if(!v) return '<div class="td" style="font-size:11px;padding:14px;">No strikes for this expiry.</div>';
   const isPut=_anz.type==='P';
   const f=(x,d)=> (x==null||isNaN(x))?'—':Number(x).toFixed(d==null?2:d);
-  const head=`<tr><th>Strike</th><th>Bid</th><th>Ask</th><th>Mid</th><th>IV%</th><th>Δ</th><th>OI</th></tr>`;
+  const cols=ANZ_ALL_COLS.filter(c=>_anz.cols.includes(c.key));
+  const head=`<tr><th>Strike</th>`+cols.map(c=>`<th>${c.h}</th>`).join('')+`</tr>`;
   const rows=v.rows.map(o=>{
     const sel=Number(o.strike)===Number(_anz.selectedStrike);
     const itm=isPut?(o.strike>=v.price):(o.strike<=v.price);
     const atm=Number(o.strike)===Number(v.atmStrike);
-    const mid=(o.bid&&o.ask)?((o.bid+o.ask)/2):(o.lastPrice||0);
-    const ivp=o.impliedVolatility!=null?(o.impliedVolatility*100):null;
     const cls=[sel?'anz-sel':'', (itm&&!sel)?'anz-itm':'', (atm&&!sel)?'anz-atm':''].filter(Boolean).join(' ');
     const stf=(o.strike%1)?2:0;
+    const cells=cols.map(c=>`<td>${_anzCell(c.key,o,v.price,isPut)}</td>`).join('');
     return `<tr class="${cls}" onclick="anzSetStrike(${o.strike})">`+
       `<td style="font-weight:600;${sel?'color:var(--green);':''}">$${f(o.strike,stf)}</td>`+
-      `<td>${f(o.bid)}</td><td>${f(o.ask)}</td><td>${f(mid)}</td>`+
-      `<td>${ivp==null?'—':f(ivp,1)}</td>`+
-      `<td>${o.delta==null?'—':f(o.delta,2)}</td>`+
-      `<td style="color:var(--text3);">${o.oi!=null?o.oi:'—'}</td></tr>`;
+      cells+`</tr>`;
   }).join('');
   return `<table class="anz-ladder"><thead>${head}</thead><tbody>${rows}</tbody></table>`;
 }
@@ -6885,6 +6938,12 @@ function renderAnalyze(){
     const expCtl=`<select style="${inp};cursor:pointer;" onchange="anzSetExp(this.value)">`+
       _anz.expirations.map(e=>`<option value="${e.date}"${e.date===_anz.selectedExp?' selected':''}>${e.date} (${ddays(today(),e.date)}d)</option>`).join('')+`</select>`;
     const scBtn=(n)=>`<button onclick="anzSetStrikeCount(${n})" class="${(_anz.strikeCount||20)===n?'btn-primary':'btn-ghost'}" style="padding:6px 11px;font-size:11px;">${n}</button>`;
+    const colChip=(c)=>`<button onclick="anzToggleCol('${c.key}')" class="${_anz.cols.includes(c.key)?'btn-primary':'btn-ghost'}" style="padding:4px 9px;font-size:10px;">${c.label}</button>`;
+    const colsPanel=_anz.colsOpen
+      ? `<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px;padding:10px;background:var(--surface);border:1px solid var(--border);border-radius:8px;">`+
+        `<div class="td" style="font-size:10px;width:100%;margin-bottom:2px;">Tap to show/hide columns:</div>`+
+        ANZ_ALL_COLS.map(colChip).join('')+`</div>`
+      : '';
     const sel=_anz.selectedStrike;
     const selSummary=sel
       ? `${_anz.ticker} $${sel} ${_anz.type==='P'?'Put':'Call'} · exp ${_anz.selectedExp} (${ddays(today(),_anz.selectedExp)}d)`
@@ -6900,6 +6959,7 @@ function renderAnalyze(){
         <div><div style="${lbl}">Type</div><div style="display:flex;gap:6px;width:150px;">${tBtn('P','Put')}${tBtn('C','Call')}</div></div>
         <div style="min-width:180px;"><div style="${lbl}">Expiry (week)</div>${expCtl}</div>
         <div><div style="${lbl}">Strikes shown</div><div style="display:flex;gap:5px;">${scBtn(10)}${scBtn(20)}${scBtn(30)}</div></div>
+        <div><div style="${lbl}">Columns</div><button onclick="anzToggleColsPanel()" class="btn-ghost" style="padding:6px 11px;font-size:11px;">⚙ Edit ${_anz.colsOpen?'▴':'▾'}</button></div>
         <div style="width:84px;"><div style="${lbl}">Contracts</div><input id="anz-contracts" type="number" min="1" step="1" value="${_anz.contracts||1}" style="${inp}" oninput="anzUpdate()"/></div>
         <div style="margin-left:auto;text-align:right;">
           <div style="${lbl}">Price</div>
@@ -6910,6 +6970,7 @@ function renderAnalyze(){
 
       <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;">
         <div style="flex:1;min-width:340px;">
+          ${colsPanel}
           <div id="anz-ladder-scroll" style="max-height:440px;overflow:auto;border:1px solid var(--border);border-radius:10px;background:var(--surface);">${_anzLadderHTML()}</div>
           <div class="td" style="font-size:10px;margin-top:6px;">Green = selected · shaded = in-the-money · left tick = at-the-money</div>
         </div>
