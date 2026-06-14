@@ -343,6 +343,15 @@ tbody td{padding:10px 13px;white-space:nowrap;}
 .toggle-sw .knob{position:absolute;top:3px;left:3px;width:18px;height:18px;background:var(--text2);border-radius:50%;transition:transform .15s,background .15s;}
 .toggle-sw input:checked + .track{background:var(--green);}
 .toggle-sw input:checked + .track + .knob{transform:translateX(20px);background:#000;}
+.anz-ladder{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px;}
+.anz-ladder th{position:sticky;top:0;background:var(--surface);color:var(--text3);font-weight:500;font-size:9px;letter-spacing:.05em;text-transform:uppercase;padding:6px 8px;text-align:right;border-bottom:1px solid var(--border2);z-index:1;}
+.anz-ladder td{padding:5px 8px;border-bottom:1px solid var(--border);text-align:right;}
+.anz-ladder tbody tr{cursor:pointer;border-left:2px solid transparent;}
+.anz-ladder tbody tr:hover td{background:var(--surface2);}
+.anz-ladder tr.anz-itm td{background:var(--surface2);}
+.anz-ladder tr.anz-sel{border-left-color:var(--green);}
+.anz-ladder tr.anz-sel td{background:var(--green-dim);}
+.anz-ladder tr.anz-atm{border-left-color:var(--text3);}
 .settings-label{flex:1;}
 .settings-label-title{font-size:13px;color:var(--text);margin-bottom:4px;}
 .settings-label-sub{font-size:11px;color:var(--text3);line-height:1.5;}
@@ -6645,7 +6654,7 @@ function renderReports(){
 // ═══════════════════════════════════════
 var _anz = { ticker:'', type:'P', price:null, low52:null, high52:null,
              expirations:[], chainByExp:{}, selectedExp:'', selectedStrike:'',
-             premium:'', iv:'', delta:null, contracts:1, status:'', statusKind:'' };
+             premium:'', iv:'', delta:null, contracts:1, strikeCount:20, status:'', statusKind:'' };
 
 // ── Tradier market-data access (via your Cloudflare Worker proxy) ──
 function _tradierProxy(){ try{ return (localStorage.getItem('wt_tradier_proxy')||'').trim().replace(/\/+$/,''); }catch(e){ return ''; } }
@@ -6772,6 +6781,46 @@ function _anzAutofill(){
   }
 }
 
+// ── Strike ladder (thinkorswim-style) ──
+function anzSetStrikeCount(n){ _anz.strikeCount=n; renderAnalyze(); }
+function _anzVisibleStrikes(){
+  const chain=_anz.chainByExp[_anz.selectedExp];
+  if(!chain) return null;
+  const arr=(_anz.type==='P'?chain.puts:chain.calls).slice().sort((a,b)=>a.strike-b.strike);
+  if(!arr.length) return null;
+  const price=parseFloat(_anz.price)||arr[Math.floor(arr.length/2)].strike;
+  let atm=0, best=Infinity;
+  arr.forEach((o,i)=>{ const d=Math.abs(o.strike-price); if(d<best){ best=d; atm=i; } });
+  const n=Math.min(_anz.strikeCount||20, arr.length);
+  let start=Math.max(0, atm-Math.floor(n/2));
+  let end=Math.min(arr.length, start+n);
+  start=Math.max(0, end-n);
+  return { rows:arr.slice(start,end), atmStrike:arr[atm].strike, price };
+}
+function _anzLadderHTML(){
+  const v=_anzVisibleStrikes();
+  if(!v) return '<div class="td" style="font-size:11px;padding:14px;">No strikes for this expiry.</div>';
+  const isPut=_anz.type==='P';
+  const f=(x,d)=> (x==null||isNaN(x))?'—':Number(x).toFixed(d==null?2:d);
+  const head=`<tr><th>Strike</th><th>Bid</th><th>Ask</th><th>Mid</th><th>IV%</th><th>Δ</th><th>OI</th></tr>`;
+  const rows=v.rows.map(o=>{
+    const sel=Number(o.strike)===Number(_anz.selectedStrike);
+    const itm=isPut?(o.strike>=v.price):(o.strike<=v.price);
+    const atm=Number(o.strike)===Number(v.atmStrike);
+    const mid=(o.bid&&o.ask)?((o.bid+o.ask)/2):(o.lastPrice||0);
+    const ivp=o.impliedVolatility!=null?(o.impliedVolatility*100):null;
+    const cls=[sel?'anz-sel':'', (itm&&!sel)?'anz-itm':'', (atm&&!sel)?'anz-atm':''].filter(Boolean).join(' ');
+    const stf=(o.strike%1)?2:0;
+    return `<tr class="${cls}" onclick="anzSetStrike(${o.strike})">`+
+      `<td style="font-weight:600;${sel?'color:var(--green);':''}">$${f(o.strike,stf)}</td>`+
+      `<td>${f(o.bid)}</td><td>${f(o.ask)}</td><td>${f(mid)}</td>`+
+      `<td>${ivp==null?'—':f(ivp,1)}</td>`+
+      `<td>${o.delta==null?'—':f(o.delta,2)}</td>`+
+      `<td style="color:var(--text3);">${o.oi!=null?o.oi:'—'}</td></tr>`;
+  }).join('');
+  return `<table class="anz-ladder"><thead>${head}</thead><tbody>${rows}</tbody></table>`;
+}
+
 // ── Input event handlers ──
 function anzSetType(t){ _anz.type=t; _anz.selectedStrike=''; _anzAutofill(); renderAnalyze(); }
 async function anzSetExp(v){ _anz.selectedExp=v; _anz.selectedStrike=''; _anzSetStatus('Loading expiry…',''); await _anzEnsureChain(v); _anzAutofill(); _anzSetStatus(_anz.ticker?`Loaded ${_anz.ticker} · $${(_anz.price||0).toFixed(2)}`:'','ok'); renderAnalyze(); }
@@ -6811,44 +6860,14 @@ function _anzRenderMetrics(){
 function renderAnalyze(){
   const c=document.getElementById('analyze-content'); if(!c) return;
   const hasChain=!!_anz.chainByExp[_anz.selectedExp];
+  const prevScroll=(document.getElementById('anz-ladder-scroll')||{}).scrollTop||0;
   const lbl='font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--text3);margin-bottom:4px;font-weight:500;';
   const inp='width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:12px;padding:7px 10px;outline:none;box-sizing:border-box;';
   const fld='padding:0 0 12px;';
-
-  // expiry control: dropdown if we have the list, else date input
-  let expCtl;
-  if(_anz.expirations.length){
-    expCtl=`<select style="${inp};cursor:pointer;" onchange="anzSetExp(this.value)">`+
-      _anz.expirations.map(e=>`<option value="${e.date}"${e.date===_anz.selectedExp?' selected':''}>${e.date} (${ddays(today(),e.date)}d)</option>`).join('')+`</select>`;
-  } else {
-    expCtl=`<input id="anz-exp-inp" type="date" value="${_anz.selectedExp||''}" style="${inp}" oninput="anzUpdate()"/>`;
-  }
-
-  // strike control: dropdown from chain if loaded, else number input
-  let strikeCtl;
-  if(hasChain){
-    const arr=_anz.type==='P'?_anz.chainByExp[_anz.selectedExp].puts:_anz.chainByExp[_anz.selectedExp].calls;
-    const strikes=[...new Set((arr||[]).map(x=>Number(x.strike)))].sort((a,b)=>a-b);
-    strikeCtl=`<select style="${inp};cursor:pointer;" onchange="anzSetStrike(this.value)">`+
-      `<option value="">Select strike…</option>`+
-      strikes.map(s=>`<option value="${s}"${Number(s)===Number(_anz.selectedStrike)?' selected':''}>$${s}</option>`).join('')+`</select>`;
-  } else {
-    strikeCtl=`<input id="anz-strike-inp" type="number" step="0.5" value="${_anz.selectedStrike||''}" placeholder="65" style="${inp}" oninput="anzUpdate()"/>`;
-  }
-
-  const priceCtl=hasChain
-    ? `<div style="${inp};background:var(--surface);">${_anz.price!=null?'$'+Number(_anz.price).toFixed(2):'—'}</div>`
-    : `<input id="anz-price" type="number" step="0.01" value="${_anz.price!=null?_anz.price:''}" placeholder="68.50" style="${inp}" oninput="anzUpdate()"/>`;
-
   const rng=(_anz.low52!=null&&_anz.high52!=null)?`$${_anz.low52.toFixed(0)} – $${_anz.high52.toFixed(0)}`:'—';
   const tBtn=(t,txt)=>`<button onclick="anzSetType('${t}')" class="${_anz.type===t?'btn-primary':'btn-ghost'}" style="flex:1;padding:7px 0;">${txt}</button>`;
 
-  c.innerHTML=`
-    <div class="sec-hdr">
-      <span class="sec-title">Pre-Trade Analyzer</span>
-      <span class="td" style="font-size:11px;">Research a candidate option before you log it</span>
-    </div>
-
+  const tickerRow=`
     <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px;">
       <div style="flex:0 0 140px;">
         <div style="${lbl}">Ticker</div>
@@ -6856,31 +6875,84 @@ function renderAnalyze(){
       </div>
       <button class="btn-primary" style="padding:8px 16px;" onclick="anzFetchChain()">⟳ Fetch chain</button>
       <span id="anz-status" class="td" style="font-size:11px;${_anz.statusKind==='err'?'color:var(--red);':_anz.statusKind==='ok'?'color:var(--green);':''}">${_anz.status||''}</span>
-    </div>
-
-    <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;">
-      <div style="flex:0 0 230px;min-width:210px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;">
-        <div style="${fld}"><div style="${lbl}">Type</div><div style="display:flex;gap:6px;">${tBtn('P','Put')}${tBtn('C','Call')}</div></div>
-        <div style="${fld}"><div style="${lbl}">Underlying price</div>${priceCtl}</div>
-        <div style="${fld}"><div style="${lbl}">Expiry</div>${expCtl}</div>
-        <div style="${fld}"><div style="${lbl}">Strike</div>${strikeCtl}</div>
-        <div style="${fld}"><div style="${lbl}">Contracts</div><input id="anz-contracts" type="number" min="1" step="1" value="${_anz.contracts||1}" style="${inp}" oninput="anzUpdate()"/></div>
-        <div style="${fld}"><div style="${lbl}">Premium ${hasChain?'<span style="text-transform:none;letter-spacing:0;color:var(--text3);">· auto from chain, editable</span>':''}</div><input id="anz-prem" type="number" step="0.01" value="${_anz.premium||''}" placeholder="0.95" style="${inp}" oninput="anzUpdate()"/></div>
-        <div style="padding:0;"><div style="${lbl}">Implied volatility (%)</div><input id="anz-iv" type="number" step="0.1" value="${_anz.iv||''}" placeholder="19" style="${inp}" oninput="anzUpdate()"/></div>
-      </div>
-
-      <div style="flex:1;min-width:280px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;font-size:11px;color:var(--text3);">
-          <span>52-week range: <span style="color:var(--text2);">${rng}</span></span>
-        </div>
-        <div class="stat-grid" id="anz-metrics" style="grid-template-columns:repeat(4,1fr);"></div>
-        <div class="td" style="font-size:10px;margin-top:10px;line-height:1.5;">
-          Annualized return uses the same formula as your closed-trade AR%. Assignment estimate uses the contract's delta from Tradier when a chain is loaded, or an implied-volatility approximation in manual mode — either way an estimate, not a guarantee. This tool computes numbers; it doesn't recommend trades.
-        </div>
-      </div>
     </div>`;
 
+  const note=`<div class="td" style="font-size:10px;margin-top:10px;line-height:1.5;">
+      Annualized return uses the same formula as your closed-trade AR%. Assignment estimate uses the contract's delta from Tradier when a chain is loaded, or an implied-volatility approximation in manual mode — either way an estimate, not a guarantee. This tool computes numbers; it doesn't recommend trades.
+    </div>`;
+
+  if(hasChain){
+    const expCtl=`<select style="${inp};cursor:pointer;" onchange="anzSetExp(this.value)">`+
+      _anz.expirations.map(e=>`<option value="${e.date}"${e.date===_anz.selectedExp?' selected':''}>${e.date} (${ddays(today(),e.date)}d)</option>`).join('')+`</select>`;
+    const scBtn=(n)=>`<button onclick="anzSetStrikeCount(${n})" class="${(_anz.strikeCount||20)===n?'btn-primary':'btn-ghost'}" style="padding:6px 11px;font-size:11px;">${n}</button>`;
+    const sel=_anz.selectedStrike;
+    const selSummary=sel
+      ? `${_anz.ticker} $${sel} ${_anz.type==='P'?'Put':'Call'} · exp ${_anz.selectedExp} (${ddays(today(),_anz.selectedExp)}d)`
+      : 'Tap a strike in the ladder →';
+
+    c.innerHTML=`
+      <div class="sec-hdr">
+        <span class="sec-title">Pre-Trade Analyzer</span>
+        <span class="td" style="font-size:11px;">Pick a week, then a strike from the chain</span>
+      </div>
+      ${tickerRow}
+      <div style="display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px;">
+        <div><div style="${lbl}">Type</div><div style="display:flex;gap:6px;width:150px;">${tBtn('P','Put')}${tBtn('C','Call')}</div></div>
+        <div style="min-width:180px;"><div style="${lbl}">Expiry (week)</div>${expCtl}</div>
+        <div><div style="${lbl}">Strikes shown</div><div style="display:flex;gap:5px;">${scBtn(10)}${scBtn(20)}${scBtn(30)}</div></div>
+        <div style="width:84px;"><div style="${lbl}">Contracts</div><input id="anz-contracts" type="number" min="1" step="1" value="${_anz.contracts||1}" style="${inp}" oninput="anzUpdate()"/></div>
+        <div style="margin-left:auto;text-align:right;">
+          <div style="${lbl}">Price</div>
+          <div style="font-family:var(--mono);font-size:15px;font-weight:600;">${_anz.price!=null?'$'+Number(_anz.price).toFixed(2):'—'}</div>
+          <div class="td" style="font-size:10px;">52w ${rng}</div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;">
+        <div style="flex:1;min-width:340px;">
+          <div id="anz-ladder-scroll" style="max-height:440px;overflow:auto;border:1px solid var(--border);border-radius:10px;background:var(--surface);">${_anzLadderHTML()}</div>
+          <div class="td" style="font-size:10px;margin-top:6px;">Green = selected · shaded = in-the-money · left tick = at-the-money</div>
+        </div>
+        <div style="flex:0 0 280px;min-width:240px;">
+          <div style="font-family:var(--mono);font-size:12px;color:var(--text2);margin-bottom:8px;min-height:16px;">${selSummary}</div>
+          <div style="${fld}"><div style="${lbl}">Premium <span style="text-transform:none;letter-spacing:0;color:var(--text3);">· chain mid, editable</span></div><input id="anz-prem" type="number" step="0.01" value="${_anz.premium||''}" placeholder="—" style="${inp}" oninput="anzUpdate()"/></div>
+          <div class="stat-grid" id="anz-metrics" style="grid-template-columns:repeat(2,1fr);"></div>
+          ${note}
+        </div>
+      </div>`;
+  } else {
+    // ── Manual entry layout (no live chain) ──
+    const expCtl=`<input id="anz-exp-inp" type="date" value="${_anz.selectedExp||''}" style="${inp}" oninput="anzUpdate()"/>`;
+    const strikeCtl=`<input id="anz-strike-inp" type="number" step="0.5" value="${_anz.selectedStrike||''}" placeholder="65" style="${inp}" oninput="anzUpdate()"/>`;
+    const priceCtl=`<input id="anz-price" type="number" step="0.01" value="${_anz.price!=null?_anz.price:''}" placeholder="68.50" style="${inp}" oninput="anzUpdate()"/>`;
+    c.innerHTML=`
+      <div class="sec-hdr">
+        <span class="sec-title">Pre-Trade Analyzer</span>
+        <span class="td" style="font-size:11px;">Research a candidate option before you log it</span>
+      </div>
+      ${tickerRow}
+      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;">
+        <div style="flex:0 0 230px;min-width:210px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;">
+          <div style="${fld}"><div style="${lbl}">Type</div><div style="display:flex;gap:6px;">${tBtn('P','Put')}${tBtn('C','Call')}</div></div>
+          <div style="${fld}"><div style="${lbl}">Underlying price</div>${priceCtl}</div>
+          <div style="${fld}"><div style="${lbl}">Expiry</div>${expCtl}</div>
+          <div style="${fld}"><div style="${lbl}">Strike</div>${strikeCtl}</div>
+          <div style="${fld}"><div style="${lbl}">Contracts</div><input id="anz-contracts" type="number" min="1" step="1" value="${_anz.contracts||1}" style="${inp}" oninput="anzUpdate()"/></div>
+          <div style="${fld}"><div style="${lbl}">Premium</div><input id="anz-prem" type="number" step="0.01" value="${_anz.premium||''}" placeholder="0.95" style="${inp}" oninput="anzUpdate()"/></div>
+          <div style="padding:0;"><div style="${lbl}">Implied volatility (%)</div><input id="anz-iv" type="number" step="0.1" value="${_anz.iv||''}" placeholder="19" style="${inp}" oninput="anzUpdate()"/></div>
+        </div>
+        <div style="flex:1;min-width:280px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;font-size:11px;color:var(--text3);">
+            <span>52-week range: <span style="color:var(--text2);">${rng}</span></span>
+          </div>
+          <div class="stat-grid" id="anz-metrics" style="grid-template-columns:repeat(4,1fr);"></div>
+          ${note}
+        </div>
+      </div>`;
+  }
+
   _anzRenderMetrics();
+  const ls=document.getElementById('anz-ladder-scroll'); if(ls) ls.scrollTop=prevScroll;
 }
 
 </script>
