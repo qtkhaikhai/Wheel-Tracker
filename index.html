@@ -765,6 +765,21 @@ tbody td{padding:10px 13px;white-space:nowrap;}
       </div>
 
       <div class="settings-section">
+        <div class="settings-section-title">Market Data (Tradier)</div>
+        <div class="settings-row">
+          <div class="settings-label">
+            <div class="settings-label-title">Tradier proxy URL</div>
+            <div class="settings-label-sub">Paste your Cloudflare Worker URL (e.g. <b>https://wheel-tradier.you.workers.dev</b>). Your Tradier token lives inside the Worker and is never stored in this app. Powers <b>Refresh Prices</b> and the <b>Analyze</b> tab's live option chain.</div>
+          </div>
+          <div class="settings-control" style="display:flex;flex-direction:column;gap:8px;align-items:stretch;min-width:260px;">
+            <input type="text" id="setting-tradier-proxy" placeholder="https://…workers.dev" oninput="saveTradierProxy(this.value)" style="width:100%;"/>
+            <button class="settings-btn" onclick="testTradierProxy()">Test connection</button>
+            <div id="tradier-test-status" class="td" style="font-size:11px;"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-section">
         <div class="settings-section-title">Google Drive Sync</div>
         <div class="settings-row">
           <div class="settings-label">
@@ -928,7 +943,7 @@ tbody td{padding:10px 13px;white-space:nowrap;}
   <div class="bstat"><span class="blabel">Win Rate</span><span class="bval" id="bb-wr">—</span></div>
   <div class="bstat"><span class="blabel">Avg AR%</span><span class="bval tg" id="bb-ar">—</span></div>
   <div class="bstat" style="margin-left:auto;gap:12px;">
-    <button class="btn-refresh-prices" id="btn-refresh-prices" onclick="refreshYahooPrices()" title="Fetch latest prices from Yahoo Finance">⟳ Refresh Prices</button>
+    <button class="btn-refresh-prices" id="btn-refresh-prices" onclick="refreshPrices()" title="Fetch latest prices from Tradier">⟳ Refresh Prices</button>
     <span id="price-refresh-status" style="font-size:10px;color:var(--text3);"></span>
     <span style="font-size:10px;color:var(--text3);">Click ✎ Edit on any row to make changes</span>
   </div>
@@ -1662,6 +1677,23 @@ function setAutoSave(on){
   showToast(on?'Auto-save to Drive enabled':'Auto-save off — save manually with ↑ Save to Drive', false);
 }
 
+// ── Tradier market-data proxy settings ──
+function saveTradierProxy(v){ try{ localStorage.setItem('wt_tradier_proxy', (v||'').trim()); }catch(e){} }
+async function testTradierProxy(){
+  const el=document.getElementById('tradier-test-status');
+  const set=(msg,c)=>{ if(el){ el.textContent=msg; el.style.color=c||'var(--text3)'; } };
+  if(!_tradierProxy()){ set('Enter your Worker URL first.','var(--red)'); return; }
+  set('Testing…');
+  try{
+    const d=await _tradierGet('/v1/markets/quotes?symbols=AAPL');
+    const q=_asArray(d&&d.quotes&&d.quotes.quote)[0];
+    if(q&&q.last!=null) set('✓ Connected · AAPL $'+Number(q.last).toFixed(2),'var(--green)');
+    else set('Reached the Worker, but no quote came back — check the token in Cloudflare.','var(--amber)');
+  }catch(e){
+    set('✕ Could not reach the proxy. Check the URL and that the Worker is deployed.','var(--red)');
+  }
+}
+
 function _scheduleDriveSave(){
   if(!_autoSaveEnabled) return;
   if(_driveSaveTimer) clearTimeout(_driveSaveTimer);
@@ -1735,6 +1767,8 @@ function renderSettings(){
   if(elEW) elEW.value=settings.expWeeks||8;
   const elAS=document.getElementById('setting-autosave');
   if(elAS) elAS.checked=_autoSaveEnabled;
+  const elTP=document.getElementById('setting-tradier-proxy');
+  if(elTP) elTP.value=_tradierProxy();
   renderThemeSwitcher();
   // Update snapshot button label with timestamp if one exists
   const btn=document.getElementById('btn-restore-snapshot');
@@ -5519,7 +5553,7 @@ function runSchwabImport(){
 // ═══════════════════════════════════════
 //  YAHOO FINANCE PRICE FETCH
 // ═══════════════════════════════════════
-async function refreshYahooPrices(){
+async function refreshPrices(){
   const btn=document.getElementById('btn-refresh-prices');
   const status=document.getElementById('price-refresh-status');
 
@@ -5533,34 +5567,40 @@ async function refreshYahooPrices(){
     setTimeout(()=>{ status.textContent=''; },3000);
     return;
   }
+  if(!_tradierProxy()){
+    btn.className='btn-refresh-prices error';
+    btn.innerHTML='✕ No source';
+    status.textContent='Set your Tradier proxy URL in Settings → Market Data.';
+    setTimeout(()=>{ btn.className='btn-refresh-prices'; btn.innerHTML='⟳ Refresh Prices'; status.textContent=''; },5000);
+    return;
+  }
 
   btn.className='btn-refresh-prices loading';
   btn.innerHTML='<span class="spin">⟳</span> Fetching…';
   status.textContent='';
 
-  let fetched=0, failed=[];
+  let fetched=0, failed=[...tickers];
 
-  // Fetch one ticker at a time to avoid CORS issues
-  // Uses Yahoo Finance v8 chart endpoint — no API key needed
-  for(const ticker of tickers){
-    try{
-      const url=`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1d`;
-      const res=await fetch(url,{headers:{'Accept':'application/json'}});
-      if(!res.ok) throw new Error('HTTP '+res.status);
-      const data=await res.json();
-      const result=data?.chart?.result?.[0];
-      const price=result?.meta?.regularMarketPrice||result?.meta?.previousClose;
-      if(price&&!isNaN(price)){
-        sharePrices[ticker]=parseFloat(price.toFixed(4));
+  try{
+    // Tradier supports batched symbols in one request
+    const data=await _tradierGet('/v1/markets/quotes?symbols='+encodeURIComponent(tickers.join(',')));
+    const quotes=_asArray(data&&data.quotes&&data.quotes.quote);
+    quotes.forEach(q=>{
+      const sym=(q.symbol||'').toUpperCase();
+      const px=(q.last!=null?q.last:q.prevclose);
+      if(sym&&px&&!isNaN(px)){
+        sharePrices[sym]=parseFloat(Number(px).toFixed(4));
         fetched++;
-      } else {
-        failed.push(ticker);
+        const i=failed.indexOf(sym); if(i>=0) failed.splice(i,1);
       }
-    } catch(e){
-      failed.push(ticker);
-    }
-    // small delay to avoid rate limiting
-    await new Promise(r=>setTimeout(r,120));
+    });
+  }catch(e){
+    saveSharePrices();
+    btn.className='btn-refresh-prices error';
+    btn.innerHTML='✕ Failed';
+    status.textContent=(e&&e.message==='no-proxy')?'Set your Tradier proxy URL in Settings → Market Data.':'Could not reach Tradier proxy — check Settings → Market Data.';
+    setTimeout(()=>{ btn.className='btn-refresh-prices'; btn.innerHTML='⟳ Refresh Prices'; status.textContent=''; },5000);
+    return;
   }
 
   saveSharePrices();
@@ -5586,6 +5626,8 @@ async function refreshYahooPrices(){
     status.textContent='';
   },5000);
 }
+// backwards-compatible alias (button + any other callers)
+function refreshYahooPrices(){ return refreshPrices(); }
 
 // ═══════════════════════════════════════
 //  INIT — show profile selector, then load data
@@ -6603,7 +6645,18 @@ function renderReports(){
 // ═══════════════════════════════════════
 var _anz = { ticker:'', type:'P', price:null, low52:null, high52:null,
              expirations:[], chainByExp:{}, selectedExp:'', selectedStrike:'',
-             premium:'', iv:'', contracts:1, status:'', statusKind:'' };
+             premium:'', iv:'', delta:null, contracts:1, status:'', statusKind:'' };
+
+// ── Tradier market-data access (via your Cloudflare Worker proxy) ──
+function _tradierProxy(){ try{ return (localStorage.getItem('wt_tradier_proxy')||'').trim().replace(/\/+$/,''); }catch(e){ return ''; } }
+function _asArray(v){ return v==null?[]:(Array.isArray(v)?v:[v]); }
+async function _tradierGet(path){
+  const base=_tradierProxy();
+  if(!base) throw new Error('no-proxy');
+  const res=await fetch(base+path,{headers:{'Accept':'application/json'}});
+  if(!res.ok) throw new Error('HTTP '+res.status);
+  return res.json();
+}
 
 // cumulative standard normal (Abramowitz & Stegun 7.1.26)
 function _normCDF(x){
@@ -6633,62 +6686,67 @@ function _anzMetrics(){
   const cushion=price>0?((price-breakeven)/price)*100:null;
   const otm=price>0?((isPut?(price-strike):(strike-price))/price)*100:null;
   let pAssign=null;
-  const iv=(parseFloat(_anz.iv)||0)/100, T=dte/365;
-  if(iv>0&&T>0&&price>0&&strike>0){
-    const d2=(Math.log(price/strike)+(-0.5*iv*iv)*T)/(iv*Math.sqrt(T));
-    pAssign=(isPut?_normCDF(-d2):_normCDF(d2))*100;
+  if(_anz.delta!=null && !isNaN(parseFloat(_anz.delta))){
+    // Tradier gives delta directly; |delta| ≈ probability of finishing ITM
+    pAssign=Math.min(100, Math.abs(parseFloat(_anz.delta))*100);
+  } else {
+    const iv=(parseFloat(_anz.iv)||0)/100, T=dte/365;
+    if(iv>0&&T>0&&price>0&&strike>0){
+      const d2=(Math.log(price/strike)+(-0.5*iv*iv)*T)/(iv*Math.sqrt(T));
+      pAssign=(isPut?_normCDF(-d2):_normCDF(d2))*100;
+    }
   }
   return {price,strike,premium,contracts,dte,cap,netPrem,staticYield,arPct,breakeven,cushion,otm,pAssign,isPut};
 }
 
-// ── Fetch the option chain from Yahoo (mirrors refreshYahooPrices) ──
+// ── Fetch quote + expirations from Tradier (via proxy) ──
 async function anzFetchChain(){
   const tIn=document.getElementById('anz-ticker');
   const ticker=((tIn&&tIn.value)||'').trim().toUpperCase();
   if(!ticker){ _anzSetStatus('Enter a ticker first.','err'); return; }
-  _anz.ticker=ticker; _anz.selectedExp=''; _anz.selectedStrike=''; _anz.chainByExp={};
+  if(!_tradierProxy()){ _anzSetStatus('Set your Tradier proxy URL in Settings → Market Data.','err'); renderAnalyze(); return; }
+  _anz.ticker=ticker; _anz.selectedExp=''; _anz.selectedStrike=''; _anz.chainByExp={}; _anz.delta=null;
   _anzSetStatus('Fetching chain…','');
   try{
-    const url=`https://query1.finance.yahoo.com/v7/finance/options/${ticker}`;
-    const res=await fetch(url,{headers:{'Accept':'application/json'}});
-    if(!res.ok) throw new Error('HTTP '+res.status);
-    const data=await res.json();
-    const r=data&&data.optionChain&&data.optionChain.result&&data.optionChain.result[0];
-    if(!r) throw new Error('No data');
-    const q=r.quote||{};
-    _anz.price=q.regularMarketPrice!=null?q.regularMarketPrice:(q.regularMarketPreviousClose!=null?q.regularMarketPreviousClose:null);
-    _anz.low52=q.fiftyTwoWeekLow!=null?q.fiftyTwoWeekLow:null;
-    _anz.high52=q.fiftyTwoWeekHigh!=null?q.fiftyTwoWeekHigh:null;
-    _anz.expirations=(r.expirationDates||[]).map(u=>({date:_anzExpToDate(u),unix:u}));
-    if(r.options&&r.options[0]){
-      const ed=_anzExpToDate(r.options[0].expirationDate);
-      _anz.chainByExp[ed]={puts:r.options[0].puts||[],calls:r.options[0].calls||[]};
-      _anz.selectedExp=ed;
-    } else if(_anz.expirations.length){ _anz.selectedExp=_anz.expirations[0].date; }
+    // 1) quote → price + 52-week range
+    const qd=await _tradierGet('/v1/markets/quotes?symbols='+encodeURIComponent(ticker));
+    const q=_asArray(qd&&qd.quotes&&qd.quotes.quote)[0]||{};
+    _anz.price=q.last!=null?q.last:(q.prevclose!=null?q.prevclose:null);
+    _anz.low52=q.week_52_low!=null?q.week_52_low:null;
+    _anz.high52=q.week_52_high!=null?q.week_52_high:null;
+    // 2) expirations list
+    const ed=await _tradierGet('/v1/markets/options/expirations?symbol='+encodeURIComponent(ticker)+'&includeAllRoots=true');
+    const dates=_asArray(ed&&ed.expirations&&ed.expirations.date).map(String);
+    _anz.expirations=dates.map(d=>({date:d}));
+    if(_anz.expirations.length) _anz.selectedExp=_anz.expirations[0].date;
+    if(!_anz.expirations.length) throw new Error('No options listed');
     _anzSetStatus(`Loaded ${ticker} · $${(_anz.price||0).toFixed(2)}`,'ok');
     await _anzEnsureChain(_anz.selectedExp);
     _anzAutofill();
     renderAnalyze();
   }catch(e){
-    _anz.price=_anz.price||null;
-    _anzSetStatus("Couldn't fetch chain — enter strike, premium & IV manually.",'err');
+    const msg=(e&&e.message==='no-proxy')?'Set your Tradier proxy URL in Settings → Market Data.':"Couldn't reach Tradier — enter strike, premium & IV manually.";
+    _anzSetStatus(msg,'err');
     renderAnalyze();
   }
 }
 
-// ── Make sure a given expiry's chain is loaded ──
+// ── Load one expiry's chain from Tradier and normalize it ──
 async function _anzEnsureChain(expDate){
   if(!expDate||_anz.chainByExp[expDate]) return;
-  const e=_anz.expirations.find(x=>x.date===expDate);
-  if(!e) return;
   try{
-    const url=`https://query1.finance.yahoo.com/v7/finance/options/${_anz.ticker}?date=${e.unix}`;
-    const res=await fetch(url,{headers:{'Accept':'application/json'}});
-    if(!res.ok) throw 0;
-    const data=await res.json();
-    const o=data&&data.optionChain&&data.optionChain.result&&data.optionChain.result[0]&&data.optionChain.result[0].options&&data.optionChain.result[0].options[0];
-    if(o) _anz.chainByExp[expDate]={puts:o.puts||[],calls:o.calls||[]};
-  }catch(e){ /* falls through to manual */ }
+    const cd=await _tradierGet('/v1/markets/options/chains?symbol='+encodeURIComponent(_anz.ticker)+'&expiration='+encodeURIComponent(expDate)+'&greeks=true');
+    const opts=_asArray(cd&&cd.options&&cd.options.option);
+    const puts=[], calls=[];
+    opts.forEach(c=>{
+      const g=c.greeks||{};
+      const row={ strike:Number(c.strike), bid:c.bid, ask:c.ask, lastPrice:c.last,
+        impliedVolatility:(g.mid_iv!=null?g.mid_iv:(g.smv_vol!=null?g.smv_vol:null)),
+        delta:(g.delta!=null?g.delta:null), oi:c.open_interest };
+      (c.option_type==='put'?puts:calls).push(row);
+    });
+    _anz.chainByExp[expDate]={puts,calls};
+  }catch(e){ /* falls through to manual entry */ }
 }
 
 // ── Auto-fill premium + IV from the chain for the chosen strike ──
@@ -6710,6 +6768,7 @@ function _anzAutofill(){
     const mid=(c.bid&&c.ask)?((c.bid+c.ask)/2):(c.lastPrice||0);
     _anz.premium=(mid||c.lastPrice||0).toFixed(2);
     if(c.impliedVolatility!=null) _anz.iv=(c.impliedVolatility*100).toFixed(1);
+    _anz.delta=(c.delta!=null)?c.delta:null;
   }
 }
 
@@ -6719,6 +6778,8 @@ async function anzSetExp(v){ _anz.selectedExp=v; _anz.selectedStrike=''; _anzSet
 function anzSetStrike(v){ _anz.selectedStrike=v; _anzAutofill(); renderAnalyze(); }
 function _anzReadManual(){
   const g=id=>{ const el=document.getElementById(id); return el?el.value:undefined; };
+  // in manual mode (no chain for this expiry) there's no delta — use the IV estimate
+  if(!_anz.chainByExp[_anz.selectedExp]) _anz.delta=null;
   const p=g('anz-price'); if(p!==undefined) _anz.price=p;
   const k=g('anz-strike-inp'); if(k!==undefined) _anz.selectedStrike=k;
   const e=g('anz-exp-inp'); if(e!==undefined) _anz.selectedExp=e;
@@ -6814,7 +6875,7 @@ function renderAnalyze(){
         </div>
         <div class="stat-grid" id="anz-metrics" style="grid-template-columns:repeat(4,1fr);"></div>
         <div class="td" style="font-size:10px;margin-top:10px;line-height:1.5;">
-          Annualized return uses the same formula as your closed-trade AR%. Assignment estimate is derived from implied volatility (lognormal P of finishing in-the-money) — an approximation, not a guarantee. This tool computes numbers; it doesn't recommend trades.
+          Annualized return uses the same formula as your closed-trade AR%. Assignment estimate uses the contract's delta from Tradier when a chain is loaded, or an implied-volatility approximation in manual mode — either way an estimate, not a guarantee. This tool computes numbers; it doesn't recommend trades.
         </div>
       </div>
     </div>`;
