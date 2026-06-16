@@ -410,6 +410,12 @@ tbody td{padding:10px 13px;white-space:nowrap;}
 .sum-range-btns button{background:none;border:none;color:var(--text3);font-family:var(--mono);font-size:11px;padding:6px 12px;border-radius:6px;cursor:pointer;letter-spacing:.06em;text-transform:uppercase;transition:all .15s;}
 .sum-range-btns button:hover{color:var(--text2);}
 .sum-range-btns button.active{color:var(--green);background:var(--green-dim);}
+.sum-custom-dates{display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap;}
+.sum-custom-dates input[type=date]{background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:11px;padding:5px 8px;outline:none;transition:border-color .15s;}
+.sum-custom-dates input[type=date]:focus{border-color:var(--green);}
+.sum-custom-dates input[type=date]::-webkit-calendar-picker-indicator{filter:invert(1);opacity:.55;cursor:pointer;}
+[data-theme="light"] .sum-custom-dates input[type=date]::-webkit-calendar-picker-indicator{filter:none;}
+.sum-custom-dates span{color:var(--text3);font-size:13px;}
 .sum-kpi-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:var(--border);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:18px;}
 .sum-kpi{background:var(--surface);padding:14px 16px;}
 .sum-kpi-label{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3);margin-bottom:6px;}
@@ -1892,7 +1898,10 @@ function updateSharePrice(ticker,val){
 // =====================================
 //  SUMMARY PAGE
 // =====================================
-let summaryRange='all';   // week|month|quarter|ytd|all
+let summaryRange='all';   // week|month|quarter|ytd|prevyear|custom|all
+let summaryCustomStart='';  // YYYY-MM-DD for custom range
+let summaryCustomEnd='';    // YYYY-MM-DD for custom range
+const SUMMARY_RANGE_LABELS={week:'Week',month:'Month',quarter:'Quarter',ytd:'YTD',prevyear:'Prev Year',custom:'Custom',all:'All-Time'};
 let summaryExpWeek=(()=>{ const d=new Date(); d.setHours(0,0,0,0); while(d.getDay()!==5) d.setDate(d.getDate()+1); return d.toISOString().slice(0,10); })(); // current week's Friday
 let summaryExpWeekOpen=new Set(); // which weeks are expanded in the All tab
 let summaryChartMode='total'; // total|premium|pl
@@ -1900,8 +1909,19 @@ let summaryCalMonth=new Date(); summaryCalMonth.setDate(1);
 
 function setSummaryRange(r, btn){
   summaryRange=r;
+  // First time Custom is selected, default to "start of this year → today" so there's data to show
+  if(r==='custom' && !summaryCustomStart && !summaryCustomEnd){
+    const now=new Date();
+    summaryCustomStart=new Date(now.getFullYear(),0,1).toISOString().slice(0,10);
+    summaryCustomEnd=now.toISOString().slice(0,10);
+  }
   document.querySelectorAll('#summary-range-btns button').forEach(b=>b.classList.remove('active'));
   if(btn) btn.classList.add('active');
+  renderSummary();
+}
+function setSummaryCustom(which, val){
+  if(which==='start') summaryCustomStart=val;
+  else summaryCustomEnd=val;
   renderSummary();
 }
 function setSummaryExpWeek(w, btn){
@@ -1940,12 +1960,21 @@ function summaryRangeStart(){
   if(summaryRange==='month') return new Date(now.getTime()-30*86400e3);
   if(summaryRange==='quarter') return new Date(now.getTime()-90*86400e3);
   if(summaryRange==='ytd') return new Date(now.getFullYear(),0,1);
+  if(summaryRange==='prevyear') return new Date(now.getFullYear()-1,0,1);
+  if(summaryRange==='custom') return summaryCustomStart?new Date(summaryCustomStart+'T00:00:00'):null;
   return null; // all-time
+}
+function summaryRangeEnd(){
+  const now=new Date();
+  if(summaryRange==='prevyear') return new Date(now.getFullYear()-1,11,31,23,59,59,999);
+  if(summaryRange==='custom') return summaryCustomEnd?new Date(summaryCustomEnd+'T23:59:59'):now;
+  return now; // every other range runs up to the present moment
 }
 function summaryRangeLabel(){
   const now=new Date();
   const start=summaryRangeStart();
   const M=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const fmtD=(ds)=>{ const d=new Date(ds+'T12:00:00'); return `${M[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`; };
   if(summaryRange==='all'){
     const opens=trades.map(t=>t.openDate).filter(Boolean).sort();
     if(!opens.length) return 'All Time';
@@ -1964,23 +1993,37 @@ function summaryRangeLabel(){
   if(summaryRange==='ytd'){
     return `Jan – ${M[now.getMonth()]}`;
   }
+  if(summaryRange==='prevyear'){
+    return `${now.getFullYear()-1}`;
+  }
+  if(summaryRange==='custom'){
+    if(!summaryCustomStart && !summaryCustomEnd) return 'Custom';
+    const a=summaryCustomStart?fmtD(summaryCustomStart):'…';
+    const b=summaryCustomEnd?fmtD(summaryCustomEnd):'now';
+    return `${a} – ${b}`;
+  }
   return '';
 }
 function summaryRangeDays(){
   const s=summaryRangeStart();
+  const e=summaryRangeEnd()||new Date();
   if(!s) {
-    // approx: oldest trade open date to today
+    // all-time (or custom with no start): oldest trade open date to end
     const dates=trades.map(t=>t.openDate).filter(Boolean).sort();
     if(!dates.length) return 1;
-    return Math.max(1, Math.round((new Date()-new Date(dates[0]))/86400e3));
+    return Math.max(1, Math.round((e-new Date(dates[0]))/86400e3));
   }
-  return Math.max(1, Math.round((new Date()-s)/86400e3));
+  return Math.max(1, Math.round((e-s)/86400e3));
 }
 function inSummaryRange(dateStr){
   if(!dateStr) return false;
   if(summaryRange==='all') return true;
-  const s=summaryRangeStart(); if(!s) return true;
-  return new Date(dateStr)>=s;
+  const s=summaryRangeStart();
+  const e=summaryRangeEnd();
+  const d=new Date(dateStr);
+  if(s && d<s) return false;
+  if(e && d>e) return false;
+  return true;
 }
 function shiftSummaryCalMonth(delta){
   summaryCalMonth=new Date(summaryCalMonth.getFullYear(), summaryCalMonth.getMonth()+delta, 1);
@@ -2164,15 +2207,23 @@ function _renderSummaryInner(container){
             <button class="${summaryRange==='month'?'active':''}" onclick="setSummaryRange('month',this)">Month</button>
             <button class="${summaryRange==='quarter'?'active':''}" onclick="setSummaryRange('quarter',this)">Quarter</button>
             <button class="${summaryRange==='ytd'?'active':''}" onclick="setSummaryRange('ytd',this)">YTD</button>
+            <button class="${summaryRange==='prevyear'?'active':''}" onclick="setSummaryRange('prevyear',this)">Prev Year</button>
             <button class="${summaryRange==='all'?'active':''}" onclick="setSummaryRange('all',this)">All Time</button>
+            <button class="${summaryRange==='custom'?'active':''}" onclick="setSummaryRange('custom',this)">Custom</button>
           </div>
+          ${summaryRange==='custom'?`
+          <div class="sum-custom-dates">
+            <input type="date" id="sum-custom-start" value="${summaryCustomStart||''}" max="${summaryCustomEnd||''}" onchange="setSummaryCustom('start',this.value)">
+            <span>→</span>
+            <input type="date" id="sum-custom-end" value="${summaryCustomEnd||''}" min="${summaryCustomStart||''}" onchange="setSummaryCustom('end',this.value)">
+          </div>`:''}
         </div>
         <div>
-          <div class="sum-hero-stat-label">${({week:'Week',month:'Month',quarter:'Quarter',ytd:'YTD',all:'All-Time'})[summaryRange]} Income</div>
+          <div class="sum-hero-stat-label">${SUMMARY_RANGE_LABELS[summaryRange]} Income</div>
           <div class="sum-hero-stat-val ${incomeInRange>=0?'tg':'tr'}">${incomeInRange>=0?'+':''}${fm(incomeInRange)}</div>
         </div>
         <div>
-          <div class="sum-hero-stat-label">Annualized Return (${summaryRange.toUpperCase()})</div>
+          <div class="sum-hero-stat-label">Annualized Return (${(SUMMARY_RANGE_LABELS[summaryRange]||'').toUpperCase()})</div>
           <div class="sum-hero-stat-val ${periodReturn!=null&&periodReturn>=0?'tg':'tr'}">${periodReturn!=null?periodReturn.toFixed(1)+'%':'—'}</div>
         </div>
         <div>
@@ -2180,7 +2231,7 @@ function _renderSummaryInner(container){
           <div class="sum-hero-stat-val ${cashOnHand>=0?'tg':'tr'}">${fm(cashOnHand)}</div>
         </div>
         <div>
-          <div class="sum-hero-stat-label">Date Range (${summaryRange.toUpperCase()})</div>
+          <div class="sum-hero-stat-label">Date Range (${(SUMMARY_RANGE_LABELS[summaryRange]||'').toUpperCase()})</div>
           <div class="sum-hero-stat-val" style="font-size:18px;color:var(--text2);">${summaryRangeLabel()}</div>
         </div>
       </div>
@@ -2214,7 +2265,8 @@ function _renderSummaryInner(container){
   });
   events.sort((a,b)=>a.date-b.date);
   const rangeStart=summaryRangeStart();
-  const filteredEvents=rangeStart?events.filter(e=>e.date>=rangeStart):events;
+  const rangeEnd=summaryRangeEnd();
+  const filteredEvents=events.filter(e=>(!rangeStart||e.date>=rangeStart)&&(!rangeEnd||e.date<=rangeEnd));
   let cP=0, cPL=0;
   const points=filteredEvents.map(e=>{ cP+=e.premium; cPL+=e.pl; return {date:e.date, premium:cP, pl:cPL, total:cPL}; });
 
