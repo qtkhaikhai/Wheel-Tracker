@@ -3324,8 +3324,8 @@ function renderMonthly(id){
     </div>`:'';
 
   const legend=`<div style="display:flex;gap:14px;align-items:center;padding:6px 14px 2px;font-size:10px;color:var(--text3);">
-    <span style="display:flex;align-items:center;gap:5px;"><span style="width:10px;height:10px;border-radius:2px;background:var(--green);display:inline-block;"></span>Puts</span>
-    <span style="display:flex;align-items:center;gap:5px;"><span style="width:10px;height:10px;border-radius:2px;background:var(--blue);display:inline-block;"></span>Calls</span>
+    <span style="display:flex;align-items:center;gap:5px;"><span style="width:10px;height:10px;border-radius:2px;background:var(--blue);display:inline-block;"></span>Puts</span>
+    <span style="display:flex;align-items:center;gap:5px;"><span style="width:10px;height:10px;border-radius:2px;background:var(--amber);display:inline-block;"></span>Calls</span>
   </div>`;
 
   el.innerHTML=legend+keys.map(k=>{
@@ -3341,7 +3341,7 @@ function renderMonthly(id){
       <span class="mmonth">${m.label}<span class="mrow-hint">\u25b8</span></span>
       <div class="mbar-bg">
         ${total>=0
-          ? `<div style="display:flex;height:100%;border-radius:2px;overflow:hidden;width:${totalPct}%;"><div style="flex:${putsPct};background:var(--green);height:100%;"></div><div style="flex:${callsPct};background:var(--blue);height:100%;"></div></div>`
+          ? `<div style="display:flex;height:100%;border-radius:2px;overflow:hidden;width:${totalPct}%;"><div style="flex:${putsPct};background:var(--blue);height:100%;"></div><div style="flex:${callsPct};background:var(--amber);height:100%;"></div></div>`
           : `<div style="width:${totalPct}%;height:100%;background:var(--red);border-radius:2px;"></div>`
         }
       </div>
@@ -4232,10 +4232,12 @@ function renderShares(){
   // ── Section: Called Away
   let _caHtml='';
   if(calledAway.length){
-    const caRows=calledAway.map(g=>
-      g.calledAway.map(l=>
+    const caLots=[];
+    calledAway.forEach(g=>g.calledAway.forEach(l=>caLots.push({...l,ticker:g.ticker})));
+    caLots.sort((a,b)=>new Date(b.callDate||0)-new Date(a.callDate||0));
+    const caRows=caLots.map(l=>
         '<tr>'+
-          '<td><span class="ticker">'+g.ticker+'</span></td>'+
+          '<td><span class="ticker">'+l.ticker+'</span></td>'+
           '<td>'+l.shares.toLocaleString()+'</td>'+
           '<td>$'+l.strike.toFixed(2)+'</td>'+
           '<td class="ta">$'+l.costBasis.toFixed(2)+'</td>'+
@@ -4244,7 +4246,6 @@ function renderShares(){
           '<td class="'+(l.gain>=0?'tg':'tr')+'">'+fm(l.gain)+'</td>'+
           '<td class="td">'+fd(l.callDate)+'</td>'+
         '</tr>'
-      ).join('')
     ).join('');
     _caHtml=
       '<div class="sec-hdr" style="margin-top:24px;">'+
