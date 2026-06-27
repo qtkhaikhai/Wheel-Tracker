@@ -2773,6 +2773,7 @@ let editingRidx=null;
 let editDraft={};
 let openSort='default';
 let monthlyYear='all';
+let posTableView='held';
 
 function setOpenSort(s,btn){
   openSort=s;
@@ -4006,6 +4007,14 @@ function hideCalTooltip(){
 // ═══════════════════════════════════════
 //  ASSIGNED SHARES (Positions tab)
 // ═══════════════════════════════════════
+function selectPosTable(view, btn){
+  posTableView=view;
+  const root=document.getElementById('shares-content');
+  if(!root) return;
+  root.querySelectorAll('.pos-tbl-btn').forEach(b=>b.classList.toggle('active', b.getAttribute('data-view')===view));
+  root.querySelectorAll('.pos-tbl-panel').forEach(p=>{ p.style.display = p.getAttribute('data-view')===view ? '' : 'none'; });
+}
+
 function renderShares(){
   const container=document.getElementById('shares-content');
 
@@ -4261,6 +4270,47 @@ function renderShares(){
       '</table></div>';
   }
 
+  // ── Section: Assigned Shares (every cash-secured put that was assigned)
+  let _asgHtml='';
+  {
+    const asg=[];
+    trades.filter(t=>t.type==='P'&&t.assigned==='Yes'&&t.ticker).forEach(t=>{
+      const contracts=parseInt(t.contracts)||1;
+      const shares=contracts*100;
+      const strike=parseFloat(t.strike)||0;
+      const premiumPut=(parseFloat(t.premium)||0)*contracts*100;
+      const openFees=parseFloat(t.openFees)||0;
+      const costBasis=strike-(premiumPut-openFees)/shares;
+      asg.push({ticker:t.ticker,shares,strike,contracts,premiumPut,costBasis,assignDate:cd(t)||t.expDate||'',set:parseInt(t.set)||1});
+    });
+    asg.sort((a,b)=>new Date(b.assignDate||0)-new Date(a.assignDate||0));
+    if(asg.length){
+      const _asgRows=asg.map(l=>
+        '<tr>'+
+          '<td><span class="ticker">'+l.ticker+'</span></td>'+
+          '<td>'+l.shares.toLocaleString()+'</td>'+
+          '<td>'+l.contracts+' contract'+(l.contracts!==1?'s':'')+'</td>'+
+          '<td>$'+l.strike.toFixed(2)+'</td>'+
+          '<td class="tg">'+fm(l.premiumPut)+'</td>'+
+          '<td class="ta">$'+l.costBasis.toFixed(2)+'</td>'+
+          '<td class="td">'+fd(l.assignDate)+'</td>'+
+        '</tr>'
+      ).join('');
+      _asgHtml=
+        '<div class="sec-hdr" style="margin-top:24px;">'+
+          '<span class="sec-title">Assigned Shares</span>'+
+          '<span class="td" style="font-size:11px;">Shares acquired via cash-secured put assignment</span>'+
+        '</div>'+
+        '<div class="tbl-wrap" style="max-height:220px;overflow-y:auto;"><table>'+
+          '<thead><tr>'+
+            '<th>Ticker</th><th>Shares</th><th>Contracts</th><th>Put Strike</th>'+
+            '<th>Premium Received</th><th>Cost Basis</th><th>Assigned Date</th>'+
+          '</tr></thead>'+
+          '<tbody>'+_asgRows+'</tbody>'+
+        '</table></div>';
+    }
+  }
+
   // ── Donuts
   const _mkD=(ftype,tlabel,clabel,openT)=>{
     const _byT3={};
@@ -4287,7 +4337,21 @@ function renderShares(){
   const _openAll=trades.filter(t=>!cd(t)&&t.ticker);
   const _donuts=`<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:20px;">${_mkD('P','CSP Collateral','COLLATERAL',_openAll)}${_mkD('C','CC Notional','NOTIONAL',_openAll)}</div>`;
 
-  container.innerHTML=_donuts+html+_uncovHtml+_caHtml;
+  const _posBar='<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;">'+
+    '<button class="fbtn pos-tbl-btn" data-view="held" onclick="selectPosTable(\'held\',this)">Shares Held</button>'+
+    '<button class="fbtn pos-tbl-btn" data-view="uncovered" onclick="selectPosTable(\'uncovered\',this)">Uncovered Shares</button>'+
+    '<button class="fbtn pos-tbl-btn" data-view="assigned" onclick="selectPosTable(\'assigned\',this)">Assigned Shares</button>'+
+    '<button class="fbtn pos-tbl-btn" data-view="called" onclick="selectPosTable(\'called\',this)">Called Away</button>'+
+  '</div>';
+  const _posPanel=(view,inner,emptyMsg)=>'<div class="pos-tbl-panel" data-view="'+view+'" style="display:none;">'+
+    ((inner&&inner.trim())?inner:'<div class="empty-state" style="padding:36px 20px;"><div>'+emptyMsg+'</div></div>')+'</div>';
+
+  container.innerHTML=_donuts+_posBar+
+    _posPanel('held',html,'No shares currently held')+
+    _posPanel('uncovered',_uncovHtml,'No uncovered shares')+
+    _posPanel('assigned',_asgHtml,'No shares assigned from puts yet')+
+    _posPanel('called',_caHtml,'No shares called away yet');
+  selectPosTable(posTableView);
 }
 
 // ═══════════════════════════════════════
