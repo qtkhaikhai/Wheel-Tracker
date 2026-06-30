@@ -7404,9 +7404,10 @@ function _dcfOnInput(){ _dcfRecalc(); _dcfPersist(); }
 
 function _dcfShell(){
   var inp='style="width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:13px;padding:7px 9px;border-radius:6px;box-sizing:border-box;"';
-  function field(label,id,val,sub){ return '<div style="margin-bottom:10px;"><div style="font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--text2);margin-bottom:4px;">'+label+(sub?' <span style=\"color:var(--text3);text-transform:none;letter-spacing:0;\">'+sub+'</span>':'')+'</div><input id="'+id+'" '+inp+' value="'+val+'"/></div>'; }
+  function lab(label,guide){ if(!guide) return label; return '<span class="dcf-lbl">'+label+'<span class="dcf-q">ⓘ</span><span class="dcf-tip">'+guide+'</span></span>'; }
+  function field(label,id,val,sub,guide){ return '<div style="margin-bottom:10px;"><div style="font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--text2);margin-bottom:4px;">'+lab(label,guide)+(sub?' <span style=\"color:var(--text3);text-transform:none;letter-spacing:0;\">'+sub+'</span>':'')+'</div><input id="'+id+'" '+inp+' value="'+val+'"/></div>'; }
   return ''+
-  '<div class="sec-hdr"><span class="sec-title">DCF Valuation</span><span style="font-size:10px;color:var(--text3);font-family:var(--mono);">two-stage FCFF · $ in millions</span></div>'+
+  '<div class="sec-hdr"><span class="sec-title">DCF Valuation</span><span style="font-size:10px;color:var(--text3);font-family:var(--mono);">two-stage FCFF · $ in millions · hover ⓘ for a guide</span></div>'+
   // ticker bar
   '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">'+
     '<input id="dcf-ticker" placeholder="TICKER" style="text-transform:uppercase;width:120px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:14px;font-weight:600;padding:8px 10px;border-radius:6px;" oninput="this.value=this.value.toUpperCase()"/>'+
@@ -7421,29 +7422,29 @@ function _dcfShell(){
     // left: assumptions
     '<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;">'+
       '<div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text2);margin-bottom:12px;font-weight:600;">Assumptions</div>'+
-      field('Current price','dcf-price','','$')+
-      field('Base FCF','dcf-fcf','','$M')+
+      field('Current price','dcf-price','','$',"Live from Tradier — a fact. Hit ⟳ Price to refresh it.")+
+      field('Base FCF','dcf-fcf','','$M',"Auto from EDGAR: operating cash flow − capex, latest year. A fact, but sanity-check it — if that year was a one-off, click an earlier year in the line below or type a normalized figure. Everything downstream rides on this.")+
       '<div id="dcf-fcf-hist" style="font-size:10px;color:var(--text3);font-family:var(--mono);margin:-6px 0 10px;"></div>'+
-      field('Forecast years','dcf-years','10')+
-      field('Initial growth','dcf-growth','8','%/yr')+
-      '<label style="display:flex;align-items:center;gap:7px;font-size:11px;color:var(--text2);margin:-2px 0 10px;cursor:pointer;"><input type="checkbox" id="dcf-decay" checked/> Fade growth toward terminal</label>'+
-      field('Terminal growth','dcf-tgrowth','2.5','%/yr')+
-      field('Discount rate (WACC)','dcf-wacc','9','%')+
-      field('Shares outstanding','dcf-shares','','M')+
-      field('Net debt','dcf-netdebt','','$M, −=net cash')+
-      '<div style="margin-bottom:10px;"><div style="font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--text2);margin-bottom:4px;">Terminal value</div>'+
+      field('Forecast years','dcf-years','10','',"How many years you model explicitly. An estimate — 10 is standard; use 5 for businesses you cannot see clearly that far out.")+
+      field('Initial growth','dcf-growth','8','%/yr',"Your biggest lever. An estimate — anchor it to the company recent FCF growth (the history line above), then temper it. Mature large-caps ~4–8%, real growers 10–15%; be very skeptical above ~20% sustained for a decade.")+
+      '<label style="display:flex;align-items:center;gap:7px;font-size:11px;color:var(--text2);margin:-2px 0 10px;cursor:pointer;"><input type="checkbox" id="dcf-decay" checked/> '+lab('Fade growth toward terminal',"Keep this on. It tapers growth from your initial rate down to the terminal rate year by year — far more realistic than holding a high rate flat for a decade.")+'</label>'+
+      field('Terminal growth','dcf-tgrowth','2.5','%/yr',"Growth assumed forever after the forecast. An estimate — keep it low: 2–2.5% (it cannot exceed long-run GDP). Never set it near your WACC, or the math breaks.")+
+      field('Discount rate (WACC)','dcf-wacc','9','%',"Do not type here — build it with the WACC builder below, then Compute & use. Higher WACC → lower value. Most equity WACCs land 7–11%.")+
+      field('Shares outstanding','dcf-shares','','M',"Auto from EDGAR, latest filing. A fact — double-check against the newest 10-Q if it looks stale.")+
+      field('Net debt','dcf-netdebt','','$M, −=net cash',"Auto from EDGAR: total debt − cash. A fact. Negative means net cash. This bridges enterprise value down to equity value.")+
+      '<div style="margin-bottom:10px;"><div style="font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--text2);margin-bottom:4px;">'+lab('Terminal value',"How value beyond the forecast is calculated. Gordon growth fits most companies; switch to Exit EV/EBITDA to cross-check the answer.")+'</div>'+
         '<select id="dcf-method" style="width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:12px;padding:7px;border-radius:6px;"><option value="gordon">Gordon growth</option><option value="exit">Exit EV/EBITDA</option></select></div>'+
-      field('Exit multiple','dcf-exitmult','12','×EBITDA')+
-      field('Terminal EBITDA','dcf-ebitda','','$M, for exit')+
-      field('Margin-of-safety target','dcf-mos','25','%')+
+      field('Exit multiple','dcf-exitmult','12','×EBITDA',"Only used if method = Exit EV/EBITDA. An estimate from peer EV/EBITDA multiples, typically ~8–14×.")+
+      field('Terminal EBITDA','dcf-ebitda','','$M, for exit',"Only used for the exit method — your estimate of final-year EBITDA. Leave blank when using Gordon growth.")+
+      field('Margin-of-safety target','dcf-mos','25','%',"Your preference, not a model input. Sets the dashed buy-price line on the gauge and the cutoff for the Undervalued verdict. 20–30% is typical; go higher for riskier names.")+
       // WACC builder
       '<div style="margin-top:6px;border-top:1px solid var(--border);padding-top:10px;">'+
         '<div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text2);margin-bottom:10px;font-weight:600;">WACC builder</div>'+
-        field('Risk-free rate','dcf-rf','4.3','%, 10y')+
-        field('Beta','dcf-beta','1.0','manual')+
-        field('Equity risk premium','dcf-erp','5.0','%')+
-        field('Cost of debt','dcf-rd','5.0','%, pre-tax')+
-        field('Tax rate','dcf-tax','21','%')+
+        field('Risk-free rate','dcf-rf','4.3','%, 10y',"Today US 10-year Treasury yield. A fact — look it up (mid-4% range lately).")+
+        field('Beta','dcf-beta','1.0','manual',"Not in filings, so set it yourself. An estimate — grab it from your broker or Yahoo Finance. 1.0 means the stock moves with the market.")+
+        field('Equity risk premium','dcf-erp','5.0','%',"Extra return investors demand over the risk-free rate. An estimate — commonly ~4.5–5.5%.")+
+        field('Cost of debt','dcf-rd','5.0','%, pre-tax',"The company pre-tax borrowing rate. An estimate — interest expense ÷ total debt, or its current bond yield.")+
+        field('Tax rate','dcf-tax','21','%',"Auto from EDGAR (tax ÷ pre-tax income). Mostly a fact — defaults to 21% if it cannot be derived.")+
         '<button class="settings-btn" style="width:100%;" onclick="_dcfApplyWacc()">Compute &amp; use WACC</button>'+
         '<div id="dcf-wacc-out" style="font-size:10px;color:var(--text3);font-family:var(--mono);margin-top:8px;line-height:1.5;"></div>'+
       '</div>'+
@@ -7452,8 +7453,16 @@ function _dcfShell(){
     '<div id="dcf-results"></div>'+
   '</div>'+
   '<div style="font-size:10px;color:var(--text3);font-family:var(--mono);margin-top:18px;border-top:1px solid var(--border);padding-top:10px;line-height:1.6;">A DCF is only as good as its assumptions — it computes an estimate of intrinsic value, it doesn’t recommend trades. Fundamentals are auto-pulled from SEC filings (EDGAR) where available; verify against the 10-K and override anything that looks off.</div>'+
-  '<style>@media(max-width:760px){.dcf-grid{grid-template-columns:1fr !important;}}</style>';
+  '<style>'+
+  '.dcf-lbl{position:relative;display:inline-block;cursor:help;border-bottom:1px dotted var(--text3);}'+
+  '.dcf-q{font-size:8px;margin-left:3px;color:var(--text3);vertical-align:top;}'+
+  '.dcf-tip{display:none;position:absolute;left:0;top:calc(100% + 8px);z-index:60;width:232px;background:var(--surface2);border:1px solid var(--border2);border-radius:8px;padding:9px 11px;font-size:11px;line-height:1.5;letter-spacing:.01em;text-transform:none;font-weight:400;color:var(--text);box-shadow:0 8px 28px rgba(0,0,0,.4);font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;white-space:normal;}'+
+  '.dcf-tip:before{content:"";position:absolute;left:13px;top:-5px;width:9px;height:9px;background:var(--surface2);border-left:1px solid var(--border2);border-top:1px solid var(--border2);transform:rotate(45deg);}'+
+  '.dcf-lbl:hover .dcf-tip{display:block;}'+
+  '@media(max-width:760px){.dcf-grid{grid-template-columns:1fr !important;}.dcf-tip{width:200px;}}'+
+  '</style>';
 }
+
 
 // ============================================================================
 //  RECALC + PAINT
