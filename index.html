@@ -650,6 +650,7 @@ tbody td{padding:10px 13px;white-space:nowrap;}
     <button class="active" onclick="showPanel('summary',this)">Dashboard</button>
     <button onclick="showPanel('log',this)">Log</button>
     <button onclick="showPanel('analyze',this)">Analyze</button>
+    <button onclick="showPanel('dcf',this)">DCF</button>
     <button onclick="showPanel('wheels',this)">Wheels</button>
     <button onclick="showPanel('positions',this)">Positions</button>
     <button onclick="showPanel('long',this)">Long</button>
@@ -729,6 +730,11 @@ tbody td{padding:10px 13px;white-space:nowrap;}
   <!-- ANALYZE (pre-trade option analyzer) -->
   <div class="panel" id="panel-analyze">
     <div id="analyze-content"></div>
+  </div>
+
+  <!-- DCF (intrinsic value) -->
+  <div class="panel" id="panel-dcf">
+    <div id="dcf-content"></div>
   </div>
 
   <!-- P&L -->
@@ -5056,6 +5062,7 @@ function showPanel(id,btn){
   else if(id==='reports') renderReports();
   else if(id==='goal') renderGoal();
   else if(id==='analyze') renderAnalyze();
+  else if(id==='dcf') renderDCF();
   else if(id!=='log') renderDerived();
 }
 
@@ -7131,6 +7138,465 @@ function renderAnalyze(){
 
   _anzRenderMetrics();
   const ls=document.getElementById('anz-ladder-scroll'); if(ls) ls.scrollTop=prevScroll;
+}
+
+
+/* ===== DCF VALUATION TAB (injected) ===== */
+/* ============================================================================
+   DCF VALUATION TAB
+   - Price  : live from Tradier (your existing proxy)
+   - Fundamentals : auto from SEC EDGAR (via the same Worker, /edgar/* routes),
+                    every field editable as override; manual when EDGAR is thin
+   - Model  : two-stage FCFF, Gordon or exit-multiple terminal value
+   - Extras : WACC builder, reverse DCF, sensitivity matrix, bull/base/bear
+   - Sync   : localStorage cache + Drive (WheelTracker/dcf-analyses.json), global
+   ========================================================================== */
+
+var _dcf = { built:false, ticker:'', fcfSeries:[], tickerMap:null, saveTimer:null };
+
+// ---- small helpers ---------------------------------------------------------
+function _dcfNum(id){ var el=document.getElementById(id); if(!el) return NaN; var v=parseFloat(String(el.value).replace(/[, ]/g,'')); return isFinite(v)?v:NaN; }
+function _dcfVal(id){ var el=document.getElementById(id); return el?el.value:''; }
+function _dcfChk(id){ var el=document.getElementById(id); return el?!!el.checked:false; }
+function _dcfMoney(n){ if(n==null||!isFinite(n)) return '—'; var a=Math.abs(n); var s=n<0?'-':''; if(a>=1000) return s+'$'+(a/1000).toFixed(2)+'B'; return s+'$'+a.toFixed(0)+'M'; }
+function _dcfUSD(n){ if(n==null||!isFinite(n)) return '—'; return '$'+n.toFixed(2); }
+function _dcfPct(n){ if(n==null||!isFinite(n)) return '—'; return (n*100).toFixed(1)+'%'; }
+function _dcfStatus(msg,kind){ var el=document.getElementById('dcf-status'); if(el){ el.textContent=msg||''; el.style.color = kind==='err'?'var(--red)':kind==='ok'?'var(--green)':'var(--text2)'; } }
+function _dcfDriveDot(state){ var d=document.getElementById('dcf-drive-dot'); if(d) d.style.background = state==='ok'?'var(--green)':state==='busy'?'var(--amber)':'var(--text3)'; }
+
+// ============================================================================
+//  MODEL (pure)
+// ============================================================================
+function _dcfModel(p){
+  var years=Math.max(1,Math.round(p.years||10));
+  var rows=[], sumPV=0, prev=p.fcf0;
+  for(var t=1;t<=years;t++){
+    var g = (p.decay && years>1) ? (p.g0 + (p.gT-p.g0)*(t-1)/(years-1)) : p.g0;
+    var fcf=prev*(1+g);
+    var df=1/Math.pow(1+p.wacc,t);
+    var pv=fcf*df;
+    rows.push({t:t,g:g,fcf:fcf,df:df,pv:pv});
+    sumPV+=pv; prev=fcf;
+  }
+  var fcfN=prev, dfN=1/Math.pow(1+p.wacc,years), tv=0, tvValid=true;
+  if(p.method==='exit'){
+    var ebitdaN = (p.ebitda && p.fcf0) ? p.ebitda*(fcfN/p.fcf0) : fcfN;
+    tv = ebitdaN*(p.exitMult||10);
+  } else {
+    if(p.wacc<=p.gT){ tvValid=false; tv=0; }
+    else tv = fcfN*(1+p.gT)/(p.wacc-p.gT);
+  }
+  var pvTV=tv*dfN, ev=sumPV+pvTV, equity=ev-p.netDebt, iv=(p.shares>0)?equity/p.shares:NaN;
+  return {rows:rows,sumPV:sumPV,fcfN:fcfN,tv:tv,pvTV:pvTV,ev:ev,equity:equity,iv:iv,tvPct:ev?pvTV/ev:0,tvValid:tvValid,years:years};
+}
+
+// reverse DCF: implied initial growth at current price (iv is increasing in g0)
+function _dcfReverse(p,price){
+  var f=function(g){ var m=_dcfModel(Object.assign({},p,{g0:g})); return m.iv-price; };
+  var lo=-0.5, hi=1.5, flo=f(lo), fhi=f(hi);
+  if(isNaN(flo)||isNaN(fhi)) return null;
+  if(flo>0) return lo;
+  if(fhi<0) return hi;
+  for(var i=0;i<90;i++){ var mid=(lo+hi)/2; if(f(mid)>0) hi=mid; else lo=mid; }
+  return (lo+hi)/2;
+}
+
+// ============================================================================
+//  READ INPUTS -> params
+// ============================================================================
+function _dcfParams(){
+  return {
+    price:_dcfNum('dcf-price'),
+    fcf0:_dcfNum('dcf-fcf'),
+    years:_dcfNum('dcf-years'),
+    g0:_dcfNum('dcf-growth')/100,
+    gT:_dcfNum('dcf-tgrowth')/100,
+    decay:_dcfChk('dcf-decay'),
+    wacc:_dcfNum('dcf-wacc')/100,
+    shares:_dcfNum('dcf-shares'),
+    netDebt:isFinite(_dcfNum('dcf-netdebt'))?_dcfNum('dcf-netdebt'):0,
+    method:_dcfVal('dcf-method'),
+    exitMult:_dcfNum('dcf-exitmult'),
+    ebitda:_dcfNum('dcf-ebitda'),
+    mos:_dcfNum('dcf-mos')/100
+  };
+}
+
+// raw input snapshot for persistence
+var _DCF_FIELDS=['dcf-price','dcf-fcf','dcf-years','dcf-growth','dcf-tgrowth','dcf-wacc','dcf-shares','dcf-netdebt','dcf-method','dcf-exitmult','dcf-ebitda','dcf-mos','dcf-tax','dcf-beta','dcf-rf','dcf-erp','dcf-rd'];
+function _dcfReadRaw(){ var o={decay:_dcfChk('dcf-decay')}; _DCF_FIELDS.forEach(function(id){ var el=document.getElementById(id); if(el) o[id]=el.value; }); return o; }
+function _dcfApplyRaw(o){ if(!o) return; _DCF_FIELDS.forEach(function(id){ var el=document.getElementById(id); if(el && o[id]!=null) el.value=o[id]; }); var d=document.getElementById('dcf-decay'); if(d && o.decay!=null) d.checked=!!o.decay; }
+
+// ============================================================================
+//  EDGAR
+// ============================================================================
+function _dcfProxy(){ return (typeof _tradierProxy==='function')?_tradierProxy():''; }
+async function _dcfEdgarTickerMap(){
+  if(_dcf.tickerMap) return _dcf.tickerMap;
+  try{ var s=localStorage.getItem('wt_dcf_cikmap'); if(s){ _dcf.tickerMap=JSON.parse(s); return _dcf.tickerMap; } }catch(e){}
+  var base=_dcfProxy(); if(!base) throw new Error('no-proxy');
+  var r=await fetch(base+'/edgar/tickers',{headers:{Accept:'application/json'}});
+  if(!r.ok) throw new Error('tickers HTTP '+r.status);
+  var data=await r.json(), map={};
+  Object.keys(data).forEach(function(k){ var o=data[k]; if(o&&o.ticker) map[String(o.ticker).toUpperCase()]=String(o.cik_str); });
+  _dcf.tickerMap=map;
+  try{ localStorage.setItem('wt_dcf_cikmap', JSON.stringify(map)); }catch(e){}
+  return map;
+}
+async function _dcfEdgarFacts(cik){
+  var base=_dcfProxy(); if(!base) throw new Error('no-proxy');
+  var r=await fetch(base+'/edgar/facts?cik='+encodeURIComponent(cik),{headers:{Accept:'application/json'}});
+  if(!r.ok) throw new Error('facts HTTP '+r.status);
+  return r.json();
+}
+function _dcfAnnualSeries(facts,ns,tags){
+  var f=facts&&facts.facts&&facts.facts[ns]; if(!f) return [];
+  for(var i=0;i<tags.length;i++){ var node=f[tags[i]];
+    if(node&&node.units){
+      var ukey=Object.keys(node.units).indexOf('USD')>=0?'USD':Object.keys(node.units)[0];
+      var arr=node.units[ukey]||[], byFy={};
+      arr.forEach(function(e){ if(e.form==='10-K' && (e.fp==='FY'||e.fp==null) && e.fy!=null && e.val!=null){ if(!byFy[e.fy]||e.end>byFy[e.fy].end) byFy[e.fy]={fy:e.fy,end:e.end,val:e.val}; } });
+      var ser=Object.keys(byFy).map(function(k){return byFy[k];}).sort(function(a,b){return a.fy-b.fy;});
+      if(ser.length) return ser;
+    }
+  }
+  return [];
+}
+function _dcfLatest(facts,ns,tags,unit){
+  var f=facts&&facts.facts&&facts.facts[ns]; if(!f) return null;
+  for(var i=0;i<tags.length;i++){ var node=f[tags[i]];
+    if(node&&node.units){
+      var pref=unit||'USD';
+      var ukey=Object.keys(node.units).indexOf(pref)>=0?pref:Object.keys(node.units)[0];
+      var arr=(node.units[ukey]||[]).filter(function(e){return e.val!=null;});
+      if(arr.length){ arr.sort(function(a,b){return a.end<b.end?-1:1;}); return arr[arr.length-1].val; }
+    }
+  }
+  return null;
+}
+function _dcfExtract(facts){
+  var ocf=_dcfAnnualSeries(facts,'us-gaap',['NetCashProvidedByUsedInOperatingActivities','NetCashProvidedByUsedInOperatingActivitiesContinuingOperations']);
+  var capex=_dcfAnnualSeries(facts,'us-gaap',['PaymentsToAcquirePropertyPlantAndEquipment','PaymentsToAcquireProductiveAssets']);
+  var capexByFy={}; capex.forEach(function(e){capexByFy[e.fy]=e.val;});
+  var fcfSeries=ocf.map(function(e){ return {fy:e.fy, val:(e.val-(capexByFy[e.fy]||0))/1e6}; }).slice(-6);
+  var cash=_dcfLatest(facts,'us-gaap',['CashAndCashEquivalentsAtCarryingValue','CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents']);
+  var debt=_dcfLatest(facts,'us-gaap',['LongTermDebt','DebtLongtermAndShorttermCombinedAmount']);
+  if(debt==null){ var lt=_dcfLatest(facts,'us-gaap',['LongTermDebtNoncurrent']); var cur=_dcfLatest(facts,'us-gaap',['LongTermDebtCurrent','DebtCurrent']); if(lt!=null||cur!=null) debt=(lt||0)+(cur||0); }
+  var shares=_dcfLatest(facts,'dei',['EntityCommonStockSharesOutstanding'],'shares'); if(shares==null) shares=_dcfLatest(facts,'us-gaap',['CommonStockSharesOutstanding'],'shares');
+  var tax=_dcfLatest(facts,'us-gaap',['IncomeTaxExpenseBenefit']);
+  var pretax=_dcfLatest(facts,'us-gaap',['IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest','IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments']);
+  var taxRate=null; if(tax!=null&&pretax){ taxRate=tax/pretax; if(taxRate<0||taxRate>0.6) taxRate=null; }
+  var netDebt=(debt!=null||cash!=null)?(((debt||0)-(cash||0))/1e6):null;
+  return { fcfSeries:fcfSeries, baseFCF:fcfSeries.length?fcfSeries[fcfSeries.length-1].val:null, netDebt:netDebt, shares:(shares!=null)?shares/1e6:null, taxRate:taxRate, entityName:facts.entityName||'' };
+}
+async function _dcfFetchEdgar(){
+  var t=(_dcfVal('dcf-ticker')||'').trim().toUpperCase();
+  if(!t){ _dcfStatus('Enter a ticker first.','err'); return; }
+  if(!_dcfProxy()){ _dcfStatus('Set your proxy URL in Settings → Market Data.','err'); return; }
+  _dcf.ticker=t; _dcfStatus('Looking up '+t+' on EDGAR…','');
+  try{
+    var map=await _dcfEdgarTickerMap(); var cik=map[t];
+    if(!cik){ _dcfStatus('“'+t+'” isn’t in SEC filings (US-listed companies only). Enter fundamentals manually.','err'); return; }
+    _dcfStatus('Pulling filings for '+t+'…','');
+    var ex=_dcfExtract(await _dcfEdgarFacts(cik));
+    var setIf=function(id,v){ if(v!=null&&isFinite(v)){ var el=document.getElementById(id); if(el) el.value=Math.round(v*100)/100; } };
+    setIf('dcf-fcf',ex.baseFCF); setIf('dcf-netdebt',ex.netDebt); setIf('dcf-shares',ex.shares); if(ex.taxRate!=null) setIf('dcf-tax',ex.taxRate*100);
+    _dcf.fcfSeries=ex.fcfSeries||[];
+    var miss=[]; if(ex.baseFCF==null)miss.push('FCF'); if(ex.netDebt==null)miss.push('net debt'); if(ex.shares==null)miss.push('shares');
+    _dcfStatus('Loaded '+(ex.entityName||t)+' from EDGAR'+(miss.length?(' — couldn’t resolve '+miss.join(', ')+' (enter manually)'):'')+'. Beta isn’t in filings, so set it in the WACC builder.','ok');
+    _dcfFetchPrice(); _dcfRecalc(); _dcfPersist();
+  }catch(e){ _dcfStatus('EDGAR fetch failed ('+e.message+'). Enter fundamentals manually.','err'); }
+}
+async function _dcfFetchPrice(){
+  var t=(_dcfVal('dcf-ticker')||'').trim().toUpperCase(); if(!t) return;
+  if(typeof _tradierGet!=='function'||!_dcfProxy()) return;
+  try{
+    var d=await _tradierGet('/v1/markets/quotes?symbols='+encodeURIComponent(t));
+    var q=(typeof _asArray==='function'?_asArray(d&&d.quotes&&d.quotes.quote):[]) [0];
+    if(q&&q.last!=null){ var el=document.getElementById('dcf-price'); if(el){ el.value=q.last; } _dcfRecalc(); _dcfPersist(); }
+  }catch(e){}
+}
+
+// ============================================================================
+//  WACC BUILDER
+// ============================================================================
+function _dcfBuildWacc(){
+  var rf=_dcfNum('dcf-rf')/100, beta=_dcfNum('dcf-beta'), erp=_dcfNum('dcf-erp')/100;
+  var rd=_dcfNum('dcf-rd')/100, tax=_dcfNum('dcf-tax')/100;
+  var price=_dcfNum('dcf-price'), shares=_dcfNum('dcf-shares'), netDebt=_dcfNum('dcf-netdebt');
+  var re=rf+beta*erp;
+  var rdAt=rd*(1-(isFinite(tax)?tax:0.21));
+  var E=(isFinite(price)&&isFinite(shares))?price*shares:NaN;     // $M (price * Mshares)
+  // approximate gross debt from net debt + (we don't store cash separately) -> use max(netDebt,0)
+  var D=isFinite(netDebt)?Math.max(netDebt,0):0;
+  var wacc;
+  if(isFinite(E)&&E+D>0) wacc=(E*re+D*rdAt)/(E+D); else wacc=re;
+  var out=document.getElementById('dcf-wacc-out');
+  if(out) out.innerHTML='Cost of equity '+_dcfPct(re)+' · after-tax cost of debt '+_dcfPct(rdAt)+' · weights E '+(isFinite(E)?Math.round(100*E/(E+D)):'—')+'% / D '+(isFinite(E)?Math.round(100*D/(E+D)):'—')+'% → <b style="color:var(--green);">WACC '+_dcfPct(wacc)+'</b>';
+  return wacc;
+}
+function _dcfApplyWacc(){ var w=_dcfBuildWacc(); var el=document.getElementById('dcf-wacc'); if(el&&isFinite(w)){ el.value=(w*100).toFixed(2); _dcfRecalc(); _dcfPersist(); } }
+
+// ============================================================================
+//  PERSISTENCE  (localStorage keyed by ticker + debounced Drive)
+// ============================================================================
+function _dcfStore(){ try{ return JSON.parse(localStorage.getItem('wt_dcf_store')||'{}'); }catch(e){ return {}; } }
+function _dcfPersist(){
+  var t=(_dcfVal('dcf-ticker')||'').trim().toUpperCase(); if(!t) return; _dcf.ticker=t;
+  var all=_dcfStore(); all[t]={raw:_dcfReadRaw(),fcfSeries:_dcf.fcfSeries||[],ts:Date.now()};
+  try{ localStorage.setItem('wt_dcf_store',JSON.stringify(all)); }catch(e){}
+  if(_dcf.saveTimer) clearTimeout(_dcf.saveTimer);
+  _dcfDriveDot('busy');
+  _dcf.saveTimer=setTimeout(function(){ _dcfDriveSave().then(function(){_dcfDriveDot('ok');}).catch(function(){_dcfDriveDot('idle');}); },2500);
+}
+function _dcfHydrateTicker(t){
+  t=(t||'').trim().toUpperCase(); if(!t) return;
+  var rec=_dcfStore()[t];
+  if(rec){ _dcfApplyRaw(rec.raw); _dcf.fcfSeries=rec.fcfSeries||[]; _dcfStatus('Loaded saved analysis for '+t+'.','ok'); }
+  else { _dcf.fcfSeries=[]; }
+  _dcf.ticker=t; _dcfRecalc();
+}
+
+// ---- Drive (reuses the app's existing Drive auth + folder) ------------------
+async function _dcfDriveSave(){
+  if(typeof _ensureDriveFolder!=='function'||typeof _driveReq!=='function') return;
+  var folder=await _ensureDriveFolder();
+  var name='dcf-analyses.json';
+  var q=encodeURIComponent('name="'+name+'" and "'+folder+'" in parents and trashed=false');
+  var list=await _driveReq('GET','https://www.googleapis.com/drive/v3/files?q='+q+'&fields=files(id,name)');
+  var content=JSON.stringify({_meta:{app:'wheel-tracker-dcf',updated:new Date().toISOString()},analyses:_dcfStore()});
+  var boundary='----wtdcf'+Date.now();
+  var meta=JSON.stringify({name:name,parents:[folder]});
+  var body='--'+boundary+'\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n'+meta+'\r\n--'+boundary+'\r\nContent-Type: application/json\r\n\r\n'+content+'\r\n--'+boundary+'--';
+  var ct='multipart/related; boundary='+boundary;
+  if(list.files&&list.files.length) await _driveReq('PATCH','https://www.googleapis.com/upload/drive/v3/files/'+list.files[0].id+'?uploadType=multipart',body,ct);
+  else await _driveReq('POST','https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',body,ct);
+}
+async function _dcfDriveLoad(){
+  try{
+    if(typeof _ensureDriveFolder!=='function') { _dcfStatus('Drive not available.','err'); return; }
+    _dcfStatus('Loading DCF analyses from Drive…','');
+    var folder=await _ensureDriveFolder();
+    var name='dcf-analyses.json';
+    var q=encodeURIComponent('name="'+name+'" and "'+folder+'" in parents and trashed=false');
+    var list=await _driveReq('GET','https://www.googleapis.com/drive/v3/files?q='+q+'&fields=files(id,name)');
+    if(!list.files||!list.files.length){ _dcfStatus('No DCF file in your Drive yet — save one first.','err'); return; }
+    var raw=await _driveReq('GET','https://www.googleapis.com/drive/v3/files/'+list.files[0].id+'?alt=media');
+    var data=(typeof raw==='string')?JSON.parse(raw):raw;
+    if(data&&data.analyses){ localStorage.setItem('wt_dcf_store',JSON.stringify(data.analyses)); _dcfStatus('Loaded DCF analyses from Drive.','ok'); _dcfDriveDot('ok'); if(_dcf.ticker) _dcfHydrateTicker(_dcf.ticker); }
+  }catch(e){ _dcfStatus('Drive load failed: '+(e.message||e)+' (sign in via Settings → Save to Drive first).','err'); }
+}
+
+// ============================================================================
+//  RENDER
+// ============================================================================
+function renderDCF(){
+  var host=document.getElementById('dcf-content'); if(!host) return;
+  if(!_dcf.built){
+    host.innerHTML=_dcfShell();
+    _dcf.built=true;
+    _DCF_FIELDS.concat(['dcf-decay']).forEach(function(id){ var el=document.getElementById(id); if(el){ el.addEventListener('input',_dcfOnInput); el.addEventListener('change',_dcfOnInput); } });
+    var tk=document.getElementById('dcf-ticker'); if(tk){ tk.addEventListener('change',function(){ _dcfHydrateTicker(tk.value); }); }
+  }
+  _dcfRecalc();
+}
+function _dcfOnInput(){ _dcfRecalc(); _dcfPersist(); }
+
+function _dcfShell(){
+  var inp='style="width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:13px;padding:7px 9px;border-radius:6px;box-sizing:border-box;"';
+  function field(label,id,val,sub){ return '<div style="margin-bottom:10px;"><div style="font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--text2);margin-bottom:4px;">'+label+(sub?' <span style=\"color:var(--text3);text-transform:none;letter-spacing:0;\">'+sub+'</span>':'')+'</div><input id="'+id+'" '+inp+' value="'+val+'"/></div>'; }
+  return ''+
+  '<div class="sec-hdr"><span class="sec-title">DCF Valuation</span><span style="font-size:10px;color:var(--text3);font-family:var(--mono);">two-stage FCFF · $ in millions</span></div>'+
+  // ticker bar
+  '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">'+
+    '<input id="dcf-ticker" placeholder="TICKER" style="text-transform:uppercase;width:120px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:14px;font-weight:600;padding:8px 10px;border-radius:6px;" oninput="this.value=this.value.toUpperCase()"/>'+
+    '<button class="btn-primary" onclick="_dcfFetchEdgar()">↧ Fetch fundamentals (EDGAR)</button>'+
+    '<button class="settings-btn" onclick="_dcfFetchPrice()">⟳ Price (Tradier)</button>'+
+    '<button class="settings-btn" onclick="_dcfDriveLoad()">↓ Load DCF from Drive</button>'+
+    '<span style="display:inline-flex;align-items:center;gap:6px;font-size:10px;color:var(--text3);font-family:var(--mono);"><span id="dcf-drive-dot" style="width:6px;height:6px;border-radius:50%;background:var(--text3);"></span>auto-syncs to Drive</span>'+
+  '</div>'+
+  '<div id="dcf-status" style="font-size:11px;font-family:var(--mono);min-height:16px;margin-bottom:12px;color:var(--text2);"></div>'+
+  // two-column
+  '<div style="display:grid;grid-template-columns:300px 1fr;gap:20px;align-items:start;" class="dcf-grid">'+
+    // left: assumptions
+    '<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;">'+
+      '<div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text2);margin-bottom:12px;font-weight:600;">Assumptions</div>'+
+      field('Current price','dcf-price','','$')+
+      field('Base FCF','dcf-fcf','','$M')+
+      '<div id="dcf-fcf-hist" style="font-size:10px;color:var(--text3);font-family:var(--mono);margin:-6px 0 10px;"></div>'+
+      field('Forecast years','dcf-years','10')+
+      field('Initial growth','dcf-growth','8','%/yr')+
+      '<label style="display:flex;align-items:center;gap:7px;font-size:11px;color:var(--text2);margin:-2px 0 10px;cursor:pointer;"><input type="checkbox" id="dcf-decay" checked/> Fade growth toward terminal</label>'+
+      field('Terminal growth','dcf-tgrowth','2.5','%/yr')+
+      field('Discount rate (WACC)','dcf-wacc','9','%')+
+      field('Shares outstanding','dcf-shares','','M')+
+      field('Net debt','dcf-netdebt','','$M, −=net cash')+
+      '<div style="margin-bottom:10px;"><div style="font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--text2);margin-bottom:4px;">Terminal value</div>'+
+        '<select id="dcf-method" style="width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:12px;padding:7px;border-radius:6px;"><option value="gordon">Gordon growth</option><option value="exit">Exit EV/EBITDA</option></select></div>'+
+      field('Exit multiple','dcf-exitmult','12','×EBITDA')+
+      field('Terminal EBITDA','dcf-ebitda','','$M, for exit')+
+      field('Margin-of-safety target','dcf-mos','25','%')+
+      // WACC builder
+      '<div style="margin-top:6px;border-top:1px solid var(--border);padding-top:10px;">'+
+        '<div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text2);margin-bottom:10px;font-weight:600;">WACC builder</div>'+
+        field('Risk-free rate','dcf-rf','4.3','%, 10y')+
+        field('Beta','dcf-beta','1.0','manual')+
+        field('Equity risk premium','dcf-erp','5.0','%')+
+        field('Cost of debt','dcf-rd','5.0','%, pre-tax')+
+        field('Tax rate','dcf-tax','21','%')+
+        '<button class="settings-btn" style="width:100%;" onclick="_dcfApplyWacc()">Compute &amp; use WACC</button>'+
+        '<div id="dcf-wacc-out" style="font-size:10px;color:var(--text3);font-family:var(--mono);margin-top:8px;line-height:1.5;"></div>'+
+      '</div>'+
+    '</div>'+
+    // right: results
+    '<div id="dcf-results"></div>'+
+  '</div>'+
+  '<div style="font-size:10px;color:var(--text3);font-family:var(--mono);margin-top:18px;border-top:1px solid var(--border);padding-top:10px;line-height:1.6;">A DCF is only as good as its assumptions — it computes an estimate of intrinsic value, it doesn’t recommend trades. Fundamentals are auto-pulled from SEC filings (EDGAR) where available; verify against the 10-K and override anything that looks off.</div>'+
+  '<style>@media(max-width:760px){.dcf-grid{grid-template-columns:1fr !important;}}</style>';
+}
+
+// ============================================================================
+//  RECALC + PAINT
+// ============================================================================
+function _dcfRecalc(){
+  var host=document.getElementById('dcf-results'); if(!host) return;
+  // fcf history hint
+  var hh=document.getElementById('dcf-fcf-hist');
+  if(hh){ if(_dcf.fcfSeries&&_dcf.fcfSeries.length){ hh.innerHTML='EDGAR FCF: '+_dcf.fcfSeries.map(function(e){ return '<a href="#" onclick="document.getElementById(\'dcf-fcf\').value='+(Math.round(e.val))+';_dcfRecalc();_dcfPersist();return false;" style="color:var(--blue);text-decoration:none;">'+e.fy+':'+Math.round(e.val)+'</a>'; }).join('  '); } else hh.innerHTML=''; }
+
+  var p=_dcfParams();
+  if(!isFinite(p.fcf0)||!isFinite(p.shares)||p.shares<=0){ host.innerHTML='<div style="color:var(--text2);font-size:13px;padding:30px;text-align:center;border:1px dashed var(--border);border-radius:10px;">Enter a ticker and hit <b>Fetch fundamentals</b>, or fill in Base FCF and Shares to value it.</div>'; return; }
+
+  var m=_dcfModel({fcf0:p.fcf0,years:p.years,g0:p.g0,gT:p.gT,decay:p.decay,wacc:p.wacc,shares:p.shares,netDebt:p.netDebt,method:p.method,exitMult:p.exitMult,ebitda:p.ebitda});
+  var price=p.price, iv=m.iv;
+  var upside=(isFinite(price)&&price>0)?(iv-price)/price:NaN;
+  var mos=(iv>0)?(iv-price)/iv:NaN;
+  var verdict,vcol;
+  if(!isFinite(upside)){ verdict='No price'; vcol='var(--text2)'; }
+  else if(upside>=p.mos){ verdict='Undervalued'; vcol='var(--green)'; }
+  else if(upside<=-0.10){ verdict='Overvalued'; vcol='var(--red)'; }
+  else { verdict='Around fair value'; vcol='var(--amber)'; }
+
+  var html='';
+  // verdict cards
+  html+='<div class="stat-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px;">'+
+    _dcfCard('Intrinsic value / share',_dcfUSD(iv),vcol)+
+    _dcfCard('Current price',isFinite(price)?_dcfUSD(price):'—','var(--text)')+
+    _dcfCard('Upside / downside',isFinite(upside)?(upside>=0?'+':'')+_dcfPct(upside):'—',isFinite(upside)?(upside>=0?'var(--green)':'var(--red)'):'var(--text2)')+
+    _dcfCard(verdict,'MoS '+(isFinite(mos)?_dcfPct(mos):'—'),vcol)+
+  '</div>';
+  if(!m.tvValid) html+='<div style="background:var(--red-dim);border:1px solid var(--red);color:var(--red);font-size:11px;padding:8px 12px;border-radius:8px;margin-bottom:14px;font-family:var(--mono);">WACC must exceed terminal growth for the Gordon model. Raise WACC or lower terminal growth (or switch to exit multiple).</div>';
+
+  // gauge
+  html+=_dcfGauge(price,iv,p.mos);
+
+  // bridge + reverse
+  html+='<div class="g2" style="margin-bottom:16px;">'+_dcfBridge(m,p)+_dcfReverseCard(p,price)+'</div>';
+
+  // projection table
+  html+=_dcfProjTable(m);
+
+  // sensitivity
+  html+=_dcfSensitivity(p,price);
+
+  // scenarios
+  html+=_dcfScenarios(p,price);
+
+  host.innerHTML=html;
+}
+
+function _dcfCard(label,val,col){ return '<div class="stat" style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;"><div style="font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--text2);margin-bottom:6px;">'+label+'</div><div style="font-size:20px;font-weight:700;font-family:var(--mono);color:'+(col||'var(--text)')+';">'+val+'</div></div>'; }
+
+function _dcfGauge(price,iv,mosT){
+  if(!isFinite(price)||!isFinite(iv)||iv<=0) return '';
+  var maxv=Math.max(price,iv)*1.25, pPx=Math.min(100,price/maxv*100), iPx=Math.min(100,iv/maxv*100);
+  var mosPx=Math.min(100,(iv*(1-(mosT||0)))/maxv*100);
+  return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:16px;">'+
+    '<div style="position:relative;height:34px;">'+
+      '<div style="position:absolute;top:14px;left:0;right:0;height:6px;border-radius:3px;background:linear-gradient(90deg,var(--red-dim),var(--amber-dim),var(--green-dim));"></div>'+
+      '<div style="position:absolute;top:8px;left:'+mosPx+'%;width:0;border-left:1px dashed var(--amber);height:18px;" title="margin-of-safety entry"></div>'+
+      '<div style="position:absolute;top:6px;left:'+pPx+'%;transform:translateX(-50%);font-size:9px;font-family:var(--mono);color:var(--text);text-align:center;"><div style="width:2px;height:14px;background:var(--text);margin:0 auto;"></div>price</div>'+
+      '<div style="position:absolute;top:6px;left:'+iPx+'%;transform:translateX(-50%);font-size:9px;font-family:var(--mono);color:'+(iv>=price?'var(--green)':'var(--red)')+';text-align:center;"><div style="width:2px;height:14px;background:'+(iv>=price?'var(--green)':'var(--red)')+';margin:0 auto;"></div>value</div>'+
+    '</div>'+
+    '<div style="font-size:10px;color:var(--text3);font-family:var(--mono);text-align:center;margin-top:2px;">dashed line = your '+Math.round((mosT||0)*100)+'% margin-of-safety buy price ('+_dcfUSD(iv*(1-(mosT||0)))+')</div>'+
+  '</div>';
+}
+
+function _dcfBridge(m,p){
+  function row(l,v,b){ return '<div style="display:flex;justify-content:space-between;padding:5px 0;font-family:var(--mono);font-size:12px;'+(b?'border-top:1px solid var(--border);font-weight:700;':'')+'"><span style="color:var(--text2);">'+l+'</span><span style="color:var(--text);">'+v+'</span></div>'; }
+  var tvWarn = m.tvPct>0.75;
+  return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;">'+
+    '<div class="sec-title" style="font-size:12px;margin-bottom:8px;">Enterprise → equity bridge</div>'+
+    row('PV of forecast FCF',_dcfMoney(m.sumPV))+
+    row('PV of terminal value',_dcfMoney(m.pvTV))+
+    row('Enterprise value',_dcfMoney(m.ev),true)+
+    row('− Net debt',_dcfMoney(p.netDebt))+
+    row('Equity value',_dcfMoney(m.equity),true)+
+    row('÷ Shares (M)',(p.shares||0).toFixed(0))+
+    row('Intrinsic value / share',_dcfUSD(m.iv),true)+
+    '<div style="margin-top:8px;font-size:10px;font-family:var(--mono);color:'+(tvWarn?'var(--amber)':'var(--text3)')+';">Terminal value = '+Math.round(m.tvPct*100)+'% of enterprise value'+(tvWarn?' — most of the valuation rides on the terminal assumptions.':'.')+'</div>'+
+  '</div>';
+}
+
+function _dcfReverseCard(p,price){
+  var impl=isFinite(price)&&price>0?_dcfReverse({fcf0:p.fcf0,years:p.years,gT:p.gT,decay:p.decay,wacc:p.wacc,shares:p.shares,netDebt:p.netDebt,method:p.method,exitMult:p.exitMult,ebitda:p.ebitda},price):null;
+  var your=p.g0;
+  var msg;
+  if(impl==null) msg='<span style="color:var(--text2);">Enter a current price to see the market’s implied growth.</span>';
+  else { var cmp= impl>your ? 'higher than' : impl<your ? 'lower than' : 'in line with'; var c= impl>your?'var(--red)':'var(--green)'; msg='At '+_dcfUSD(price)+', the market is pricing in <b style="color:'+c+';font-size:18px;">'+_dcfPct(impl)+'</b> initial FCF growth for '+p.years+' years.<br><span style="color:var(--text3);">That’s '+cmp+' your '+_dcfPct(your)+' assumption. Ask: is '+_dcfPct(impl)+' believable for this company?</span>'; }
+  return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;">'+
+    '<div class="sec-title" style="font-size:12px;margin-bottom:8px;">Reverse DCF — implied growth</div>'+
+    '<div style="font-family:var(--mono);font-size:12px;line-height:1.7;">'+msg+'</div>'+
+  '</div>';
+}
+
+function _dcfProjTable(m){
+  var h='<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:16px;overflow-x:auto;">'+
+    '<div class="sec-title" style="font-size:12px;margin-bottom:8px;">Projection</div>'+
+    '<table style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px;">'+
+    '<tr style="color:var(--text2);text-align:right;"><th style="text-align:left;padding:4px 6px;">Year</th><th style="padding:4px 6px;">Growth</th><th style="padding:4px 6px;">FCF</th><th style="padding:4px 6px;">Discount</th><th style="padding:4px 6px;">PV</th></tr>';
+  m.rows.forEach(function(r){ h+='<tr style="text-align:right;border-top:1px solid var(--border);"><td style="text-align:left;padding:4px 6px;color:var(--text2);">'+r.t+'</td><td style="padding:4px 6px;color:var(--text);">'+_dcfPct(r.g)+'</td><td style="padding:4px 6px;color:var(--text);">'+_dcfMoney(r.fcf)+'</td><td style="padding:4px 6px;color:var(--text3);">'+r.df.toFixed(3)+'</td><td style="padding:4px 6px;color:var(--text);">'+_dcfMoney(r.pv)+'</td></tr>'; });
+  h+='<tr style="text-align:right;border-top:2px solid var(--border2);font-weight:700;"><td style="text-align:left;padding:4px 6px;color:var(--text2);">TV</td><td></td><td></td><td></td><td style="padding:4px 6px;color:var(--green);">'+_dcfMoney(m.pvTV)+'</td></tr>';
+  h+='</table></div>';
+  return h;
+}
+
+function _dcfSensitivity(p,price){
+  var waccs=[-0.02,-0.01,0,0.01,0.02].map(function(d){return p.wacc+d;});
+  var gts=[-0.01,-0.005,0,0.005,0.01].map(function(d){return p.gT+d;});
+  function cellColor(iv){ if(!isFinite(price)||price<=0||!isFinite(iv)) return 'transparent'; var r=iv/price; if(r>=1.25) return 'rgba(0,200,120,0.30)'; if(r>=1.05) return 'rgba(0,200,120,0.15)'; if(r>=0.95) return 'rgba(255,184,48,0.15)'; if(r>=0.75) return 'rgba(255,77,109,0.15)'; return 'rgba(255,77,109,0.30)'; }
+  var h='<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:16px;overflow-x:auto;">'+
+    '<div class="sec-title" style="font-size:12px;margin-bottom:4px;">Sensitivity — intrinsic value / share</div>'+
+    '<div style="font-size:10px;color:var(--text3);font-family:var(--mono);margin-bottom:8px;">rows = WACC · columns = terminal growth · shaded vs current price</div>'+
+    '<table style="border-collapse:collapse;font-family:var(--mono);font-size:11px;min-width:420px;"><tr><th style="padding:5px 8px;color:var(--text3);font-weight:400;">WACC＼g</th>';
+  gts.forEach(function(g){ h+='<th style="padding:5px 8px;color:var(--text2);text-align:right;">'+_dcfPct(g)+'</th>'; });
+  h+='</tr>';
+  waccs.forEach(function(w){ h+='<tr><td style="padding:5px 8px;color:var(--text2);">'+_dcfPct(w)+'</td>';
+    gts.forEach(function(g){ var mm=_dcfModel({fcf0:p.fcf0,years:p.years,g0:p.g0,gT:g,decay:p.decay,wacc:w,shares:p.shares,netDebt:p.netDebt,method:p.method,exitMult:p.exitMult,ebitda:p.ebitda}); var iv=mm.iv; h+='<td style="padding:5px 8px;text-align:right;color:var(--text);background:'+cellColor(iv)+';">'+(isFinite(iv)?_dcfUSD(iv):'—')+'</td>'; });
+    h+='</tr>'; });
+  h+='</table></div>';
+  return h;
+}
+
+function _dcfScenarios(p,price){
+  var defs=[
+    {k:'Bear',dg:-0.03,dw:0.01,dt:-0.005,c:'var(--red)'},
+    {k:'Base',dg:0,dw:0,dt:0,c:'var(--text)'},
+    {k:'Bull',dg:0.03,dw:-0.01,dt:0.005,c:'var(--green)'}
+  ];
+  var h='<div class="stat-grid" style="grid-template-columns:repeat(3,1fr);">';
+  defs.forEach(function(s){
+    var mm=_dcfModel({fcf0:p.fcf0,years:p.years,g0:p.g0+s.dg,gT:p.gT+s.dt,decay:p.decay,wacc:p.wacc+s.dw,shares:p.shares,netDebt:p.netDebt,method:p.method,exitMult:p.exitMult,ebitda:p.ebitda});
+    var up=(isFinite(price)&&price>0)?(mm.iv-price)/price:NaN;
+    h+='<div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid '+s.c+';border-radius:10px;padding:12px 14px;">'+
+      '<div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:'+s.c+';margin-bottom:6px;font-weight:600;">'+s.k+'</div>'+
+      '<div style="font-size:20px;font-weight:700;font-family:var(--mono);color:var(--text);">'+_dcfUSD(mm.iv)+'</div>'+
+      '<div style="font-size:11px;font-family:var(--mono);color:'+(isFinite(up)?(up>=0?'var(--green)':'var(--red)'):'var(--text2)')+';margin-top:3px;">'+(isFinite(up)?(up>=0?'+':'')+_dcfPct(up)+' vs price':'—')+'</div>'+
+      '<div style="font-size:9px;font-family:var(--mono);color:var(--text3);margin-top:6px;">g '+_dcfPct(p.g0+s.dg)+' · wacc '+_dcfPct(p.wacc+s.dw)+' · term '+_dcfPct(p.gT+s.dt)+'</div>'+
+    '</div>';
+  });
+  h+='</div>';
+  return h;
 }
 
 </script>
