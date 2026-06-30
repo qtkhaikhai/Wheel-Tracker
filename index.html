@@ -4179,7 +4179,7 @@ function renderShares(){
         '<span class="sec-title">Shares Held</span>'+
         '<span class="td" style="font-size:11px;">'+grandTotalShares.toLocaleString()+' shares · '+fm(grandAdjCost)+' adj. cost basis</span>'+
       '</div>'+
-      '<div class="tbl-wrap" style="max-height:440px;overflow-y:auto;"><table>'+
+      '<div class="tbl-wrap"><table>'+
         '<thead><tr>'+
           '<th>Ticker</th><th>Lots / Set</th><th>Shares</th><th>Avg Cost Basis</th>'+
           '<th>Premium Received</th><th>Adj. Cost Basis</th><th>Date</th><th>Notes</th>'+
@@ -4232,7 +4232,7 @@ function renderShares(){
         '<span class="sec-title">Uncovered Shares</span>'+
         '<span class="td" style="font-size:11px;">Assigned shares not under an active covered call</span>'+
       '</div>'+
-      '<div class="tbl-wrap" style="max-height:220px;overflow-y:auto;"><table>'+
+      '<div class="tbl-wrap"><table>'+
         '<thead><tr><th>Ticker</th><th>Uncovered Shares</th></tr></thead>'+
         '<tbody>'+_ucRows+'</tbody>'+
       '</table></div>';
@@ -4301,7 +4301,7 @@ function renderShares(){
           '<span class="sec-title">Assigned Shares</span>'+
           '<span class="td" style="font-size:11px;">Shares acquired via cash-secured put assignment</span>'+
         '</div>'+
-        '<div class="tbl-wrap" style="max-height:220px;overflow-y:auto;"><table>'+
+        '<div class="tbl-wrap"><table>'+
           '<thead><tr>'+
             '<th>Ticker</th><th>Shares</th><th>Contracts</th><th>Put Strike</th>'+
             '<th>Premium Received</th><th>Cost Basis</th><th>Assigned Date</th>'+
