@@ -7269,6 +7269,7 @@ function _dcfLatest(facts,ns,tags,unit){
   }
   return null;
 }
+function _dcfLatestAnnual(facts,ns,tags){ var s=_dcfAnnualSeries(facts,ns,tags); return s.length?s[s.length-1].val:null; }
 function _dcfCagr(series){ if(!series||series.length<2) return null; var a=series[0].val,b=series[series.length-1].val,n=series.length-1; if(a<=0||b<=0) return null; return Math.pow(b/a,1/n)-1; }
 function _dcfExtract(facts){
   var ocf=_dcfAnnualSeries(facts,'us-gaap',['NetCashProvidedByUsedInOperatingActivities','NetCashProvidedByUsedInOperatingActivitiesContinuingOperations']);
@@ -7281,9 +7282,9 @@ function _dcfExtract(facts){
   var debt=_dcfLatest(facts,'us-gaap',['LongTermDebt','DebtLongtermAndShorttermCombinedAmount']);
   if(debt==null){ var lt=_dcfLatest(facts,'us-gaap',['LongTermDebtNoncurrent']); var cur=_dcfLatest(facts,'us-gaap',['LongTermDebtCurrent','DebtCurrent']); if(lt!=null||cur!=null) debt=(lt||0)+(cur||0); }
   var shares=_dcfLatest(facts,'dei',['EntityCommonStockSharesOutstanding'],'shares'); if(shares==null) shares=_dcfLatest(facts,'us-gaap',['CommonStockSharesOutstanding'],'shares');
-  var ni=_dcfLatest(facts,'us-gaap',['NetIncomeLoss']);
-  var tax=_dcfLatest(facts,'us-gaap',['IncomeTaxExpenseBenefit']);
-  var pretax=_dcfLatest(facts,'us-gaap',['IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest','IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments']);
+  var ni=_dcfLatestAnnual(facts,'us-gaap',['NetIncomeLoss']);
+  var tax=_dcfLatestAnnual(facts,'us-gaap',['IncomeTaxExpenseBenefit']);
+  var pretax=_dcfLatestAnnual(facts,'us-gaap',['IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest','IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments']);
   var taxRate=null; if(tax!=null&&pretax){ taxRate=tax/pretax; if(taxRate<0||taxRate>0.6) taxRate=null; }
   var netDebt=(debt!=null||cash!=null)?(((debt||0)-(cash||0))/1e6):null;
   var rev0=revSeries.length?revSeries[revSeries.length-1].val:null;
@@ -7307,7 +7308,7 @@ async function _dcfFetchEdgar(){
     // DCF fields
     setIf('dcf-fcf',ex.baseFCF); setIf('dcf-netdebt',ex.netDebt); setIf('dcf-shares',ex.shares); if(ex.taxRate!=null) setIf('dcf-tax',ex.taxRate*100);
     // Projection fields
-    setIf('pj-rev',ex.rev0); if(ex.revCagr!=null) setIf('pj-growth',Math.max(-20,Math.min(40,ex.revCagr*100))); if(ex.margin!=null) setIf('pj-margin',ex.margin*100);
+    setIf('pj-rev',ex.rev0); if(ex.revCagr!=null) setIf('pj-growth',Math.max(-20,Math.min(40,ex.revCagr*100))); if(ex.margin!=null&&ex.margin>0) setIf('pj-margin',ex.margin*100);
     _dcf.fcfSeries=ex.fcfSeries||[]; _dcf.revSeries=ex.revSeries||[];
     _dcf.raw=_dcfReadRaw();
     var miss=[]; if(ex.baseFCF==null)miss.push('FCF'); if(ex.rev0==null)miss.push('revenue'); if(ex.shares==null)miss.push('shares');
@@ -7521,6 +7522,7 @@ function _dcfRecalcDCF(){
     _dcfCard('Upside / downside',isFinite(upside)?(upside>=0?'+':'')+_dcfPct(upside):'—',isFinite(upside)?(upside>=0?'var(--green)':'var(--red)'):'var(--text2)')+
     _dcfCard(verdict,'MoS '+(isFinite(mos)?_dcfPct(mos):'—'),vcol)+'</div>';
   if(!m.tvValid) html+='<div style="background:var(--red-dim);border:1px solid var(--red);color:var(--red);font-size:11px;padding:8px 12px;border-radius:8px;margin-bottom:14px;font-family:var(--mono);">WACC must exceed terminal growth for the Gordon model. Raise WACC or lower terminal growth (or switch to exit multiple).</div>';
+  if(p.fcf0<=0) html+='<div style="background:var(--amber-dim);border:1px solid var(--amber);color:var(--amber);font-size:11px;padding:8px 12px;border-radius:8px;margin-bottom:14px;font-family:var(--mono);">Base FCF is negative or zero, so the DCF compounds a loss into a negative value. Pick a positive year in the EDGAR FCF line above (or type a normalized FCF), or value this name with Price Projection (P/S basis).</div>';
   html+=_dcfGauge(price,iv,p.mos);
   html+='<div class="g2" style="margin-bottom:16px;">'+_dcfBridge(m,p)+_dcfReverseCard(p,price)+'</div>';
   html+=_dcfProjTable(m)+_dcfSensitivity(p,price)+_dcfScenarios(p,price);
@@ -7589,6 +7591,8 @@ function _dcfRecalcProj(){
     _dcfCard('Total return',isFinite(m.total)?(m.total>=0?'+':'')+_dcfPct(m.total):'—',isFinite(m.total)?(m.total>=0?'var(--green)':'var(--red)'):'var(--text2)')+
     _dcfCard('Annualized (CAGR)',isFinite(m.cagr)?(m.cagr>=0?'+':'')+_dcfPct(m.cagr):'—',ccol)+
     _dcfCard(isFinite(m.cagr)?(meets?'Clears your hurdle':'Below your hurdle'):'Set a price','target '+_dcfPct(p.target),ccol)+'</div>';
+  if(p.method==='pe'&&(!isFinite(p.margin)||p.margin<=0)) html+='<div style="background:var(--amber-dim);border:1px solid var(--amber);color:var(--amber);font-size:11px;padding:8px 12px;border-radius:8px;margin-bottom:14px;font-family:var(--mono);">Future net margin is zero or negative, so projected earnings — and the price — go negative. Enter the profit margin you expect at the end, or switch Valuation basis to P/S (values on sales, ignores margin).</div>';
+  else if(isFinite(m.futurePrice)&&m.futurePrice<0) html+='<div style="background:var(--amber-dim);border:1px solid var(--amber);color:var(--amber);font-size:11px;padding:8px 12px;border-radius:8px;margin-bottom:14px;font-family:var(--mono);">Projected price is negative — check your margin and multiple inputs.</div>';
   // future fundamentals + year table
   html+='<div class="g2" style="margin-bottom:16px;">';
   html+='<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;"><div class="sec-title" style="font-size:12px;margin-bottom:8px;">In '+m.years+' years</div>'+
