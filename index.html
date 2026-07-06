@@ -1258,6 +1258,7 @@ function selectProfile(id){
   _renderAll();
   // Now try to sync with Drive (will prompt sign-in if needed)
   _driveReady=false;
+  _driveLoadedThisSession=false;
   if(_accessToken&&Date.now()<_tokenExpiry-60000){
     // Already have a valid token — load straight away
     loadFromDrive(false);
@@ -1308,6 +1309,7 @@ function switchProfile(){
   _driveFileId=null;
   _driveFolderId=null;
   _driveReady=false;
+  _driveLoadedThisSession=false;
   trades=[];longs=[];leaps=[];withdrawals=[];sharePrices={};settings={capital:75000};
   document.getElementById('header-profile-badge').style.display='none';
   document.getElementById('btn-switch-profile').style.display='none';
@@ -1332,6 +1334,8 @@ let _driveReady=false;
 let _driveSaveTimer=null;
 let _tokenClient=null;
 let _tokenResolve=null;
+let _driveLoadedThisSession=false; // true once we've successfully checked Drive this session (guards against saving stale data over newer Drive data)
+let _lastSilentRefresh=0;          // cooldown so autosave doesn't spam silent token refreshes
 
 function _setDriveStatus(state,msg){
   const dot=document.getElementById('drive-dot');
@@ -1358,8 +1362,11 @@ function _initTokenClient(){
       _accessToken=resp.access_token;
       _tokenExpiry=Date.now()+(parseInt(resp.expires_in||3600)*1000);
       if(_tokenResolve){_tokenResolve({token:resp.access_token});_tokenResolve=null;}
-      // Only auto-load from Drive if a profile is already selected
-      else if(!_driveReady&&_activeProfile){ loadFromDrive(false); }
+      // Only auto-load from Drive if a profile is already selected.
+      // Uses _driveLoadedThisSession (not _driveReady) so a token that arrives
+      // AFTER the 4s startup timeout still triggers the initial load — previously
+      // a slow silent sign-in left the app running on stale local data.
+      else if(_activeProfile&&!_driveLoadedThisSession){ loadFromDrive(false); }
       else if(!_driveReady){ _driveReady=true; if(!_profiles.length) _loadProfilesFromDrive(); }
     }
   });
@@ -1433,7 +1440,9 @@ async function _pruneOldDriveFiles(folderId){
     const list=await _driveReq('GET',`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`);
     if(!list.files||!list.files.length) return;
     const cutoff=new Date(); cutoff.setDate(cutoff.getDate()-3);
-    const cutoffStr=cutoff.toISOString().slice(0,10); // YYYY-MM-DD
+    // Use LOCAL date to match _todayStr()-based filenames (toISOString is UTC,
+    // which in the evening Pacific time made pruning a day more aggressive)
+    const cutoffStr=`${cutoff.getFullYear()}-${String(cutoff.getMonth()+1).padStart(2,'0')}-${String(cutoff.getDate()).padStart(2,'0')}`; // YYYY-MM-DD
     const toDelete=list.files.filter(f=>{
       // extract date portion: wheel-data-<id>-YYYY-MM-DD.json
       const m=f.name.match(/(\d{4}-\d{2}-\d{2})\.json$/);
@@ -1529,9 +1538,17 @@ async function loadFromDrive(userTriggered){
       }
       const raw=await _driveReq('GET',`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
       const text=typeof raw==='string'?raw:JSON.stringify(raw);
-      const applied=_applyDriveData(JSON.parse(text));
+      const parsed=JSON.parse(text);
+      const applied=_applyDriveData(parsed);
       if(applied){
         _setDriveStatus('synced','Synced \u2713');
+        // Record what we last synced with, so future saves can detect if another
+        // computer has written newer data in the meantime
+        try{
+          const pid=_activeProfile?_activeProfile.id:'default';
+          const savedTs=(parsed&&parsed._meta&&parsed._meta.saved)?parsed._meta.saved:new Date().toISOString();
+          localStorage.setItem('wt_lastSync_'+pid,savedTs);
+        }catch(e){}
         // Prune files older than 3 days (runs silently in the background)
         _pruneOldDriveFiles(folderId).catch(()=>{});
       }
@@ -1539,6 +1556,9 @@ async function loadFromDrive(userTriggered){
       _driveFileId=null;
       _setDriveStatus('synced',userTriggered?'No Drive file yet':'Ready \u2014 sign in to sync');
     }
+    // Load attempt completed (even if guards kept local data — that's an explicit
+    // choice for local to win, so saving over Drive afterwards is intended)
+    _driveLoadedThisSession=true;
   }catch(e){
     console.error('Drive load:',e);
     _setDriveStatus('error','Not signed in \u2014 data saved locally');
@@ -1620,8 +1640,11 @@ function _applyDriveData(d){
     localTrades.forEach(t=>{ if(t.id) localById[t.id]=t; });
     trades=d.trades.map(dt=>{
       const local=localById[dt.id];
-      // If local has a non-empty openDate and Drive has a different one, keep local
-      if(local&&local.openDate&&dt.openDate&&local.openDate!==dt.openDate){
+      // Only fill in openDate from local when Drive's is missing/empty.
+      // (Previously local always won when the two differed, which silently
+      // reverted openDate edits made on another computer.)
+      const driveHasDate=dt.openDate&&dt.openDate!=='0'&&String(dt.openDate).trim()!=='';
+      if(local&&local.openDate&&!driveHasDate){
         return {...dt, openDate:local.openDate};
       }
       return dt;
@@ -1657,8 +1680,23 @@ async function _saveToDrive(){
   localStorage.setItem('wt_sp_'+pid,JSON.stringify(sharePrices));
   localStorage.setItem('wt_settings_'+pid,JSON.stringify(settings));
   if(!_accessToken||Date.now()>=_tokenExpiry-60000){
-    _setDriveStatus('idle','Saved locally (sign in to sync Drive)');
-    return;
+    // Token missing or expired (Google tokens last ~1 hour). Previously autosave
+    // quietly stopped syncing here — now try a silent refresh first, with a
+    // 5-minute cooldown so we don't spam refresh attempts on every edit.
+    if(Date.now()-_lastSilentRefresh<300000){
+      _setDriveStatus('error','Not syncing \u2014 click \u2191 Save to sign in');
+      return;
+    }
+    _lastSilentRefresh=Date.now();
+    const refreshed=await Promise.race([
+      _getToken(),
+      new Promise(r=>setTimeout(()=>r({err:'timeout'}),4000))
+    ]);
+    if(refreshed.err||!refreshed.token){
+      _setDriveStatus('error','Not syncing \u2014 click \u2191 Save to sign in');
+      return;
+    }
+    _lastSilentRefresh=0; // refresh worked — clear cooldown
   }
   // Validate before touching Drive — never overwrite good data with bad
   if(!_isPayloadSafe()){
@@ -1679,8 +1717,48 @@ async function _saveToDrive(){
   }
   _setDriveStatus('saving','Saving to Drive…');
   try{
+    const folderId0=_driveFolderId||await _ensureDriveFolder();
+    // ── Stale-overwrite guard ─────────────────────────────────────
+    // If we've never successfully loaded from Drive this session (e.g. the
+    // silent sign-in failed at startup), check whether another computer has
+    // saved newer data since this machine last synced. Without this, clicking
+    // ↑ Save after a failed startup load would overwrite Drive with stale data.
+    if(!_driveLoadedThisSession){
+      try{
+        let checkIsToday=true;
+        let checkId=await _findDriveFile(folderId0).catch(()=>null);
+        if(!checkId){ checkId=await _findMostRecentDriveFile(folderId0).catch(()=>null); checkIsToday=false; }
+        if(checkId){
+          const raw=await _driveReq('GET',`https://www.googleapis.com/drive/v3/files/${checkId}?alt=media`);
+          const remote=typeof raw==='string'?JSON.parse(raw):raw;
+          const remoteSaved=(remote&&remote._meta&&remote._meta.saved)?remote._meta.saved:null;
+          const lastSync=localStorage.getItem('wt_lastSync_'+pid)||'';
+          if(remoteSaved&&remoteSaved>lastSync){
+            const when=new Date(remoteSaved).toLocaleString();
+            const loadInstead=confirm(
+              `Google Drive has newer data than this computer last synced\n(saved ${when}, likely from another computer).\n\nOK = load the Drive data first (recommended \u2014 a local snapshot of this computer's data is kept and can be restored from Settings).\nCancel = overwrite Drive with THIS computer's data.`
+            );
+            if(loadInstead){
+              const applied=_applyDriveData(remote);
+              if(applied){
+                try{localStorage.setItem('wt_lastSync_'+pid,remoteSaved);}catch(e){}
+                // Only cache the file id if it was today's file — a previous
+                // day's fallback file must not be PATCHed; next save POSTs fresh
+                _driveFileId=checkIsToday?checkId:null;
+                _driveLoadedThisSession=true;
+                _setDriveStatus('synced','Loaded newer Drive data \u2713');
+                showToast('Loaded newer data from Drive \u2014 previous local data snapshotted (restorable in Settings)');
+                _renderAll();
+                return; // do not save — user chose to take Drive's version
+              }
+            }
+          }
+        }
+      }catch(e){ console.warn('Stale-overwrite check failed (continuing with save):',e); }
+      _driveLoadedThisSession=true; // user chose to overwrite, or nothing newer found
+    }
     const payload=_buildPayload();
-    const folderId=_driveFolderId||await _ensureDriveFolder();
+    const folderId=folderId0;
     // If we don't have a file id for today, check Drive first to avoid duplicates
     if(!_driveFileId&&folderId){
       const existing=await _findDriveFile(folderId).catch(()=>null);
@@ -1695,6 +1773,9 @@ async function _saveToDrive(){
       :'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id';
     const res=await _driveReq(method,url,body,'multipart/related; boundary='+boundary);
     if(!_driveFileId&&res&&res.id) _driveFileId=res.id;
+    // Record the sync point — matches the _meta.saved timestamp inside the
+    // payload closely enough for the stale-overwrite comparison
+    try{localStorage.setItem('wt_lastSync_'+pid,new Date().toISOString());}catch(e){}
     _setDriveStatus('synced','Saved to Drive ✓');
   }catch(e){
     console.error('Drive save:',e);
@@ -1734,6 +1815,26 @@ function _scheduleDriveSave(){
   if(_driveSaveTimer) clearTimeout(_driveSaveTimer);
   _driveSaveTimer=setTimeout(_saveToDrive,1800);
 }
+
+// ── Flush pending autosave when leaving the tab ──────────────────
+// The 1.8s debounce means an edit followed by an immediate tab switch or
+// close could be lost. Switching tabs/minimizing fires visibilitychange
+// while the page is still alive, so the save can complete in the background.
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='hidden'&&_driveSaveTimer){
+    clearTimeout(_driveSaveTimer);
+    _driveSaveTimer=null;
+    _saveToDrive();
+  }
+});
+// If the user closes the tab with a save still pending, show the browser's
+// "unsaved changes" prompt to give the save a chance to run.
+window.addEventListener('beforeunload',(e)=>{
+  if(_driveSaveTimer){
+    e.preventDefault();
+    e.returnValue='';
+  }
+});
 
 async function forceSaveToDrive(){
   if(_driveSaveTimer){clearTimeout(_driveSaveTimer);_driveSaveTimer=null;}
