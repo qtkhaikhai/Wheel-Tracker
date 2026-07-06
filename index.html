@@ -1895,10 +1895,10 @@ function saveLeaps(){ const _lpid=_activeProfile?_activeProfile.id:'default'; lo
 function uidLeap(){ return 'lp'+Date.now()+Math.random(); }
 // normalize closeDate the same way trades do — '', null, undefined, '0', 'null' all mean "still open"
 function leapCd(l){ const v=l.closeDate; return (v&&v!=='0'&&v!=='null'&&String(v).trim()!=='')?v:null; }
-// premium paid on still-open LEAPs counts as committed capital
-function leapCommitted(){ return leaps.filter(l=>!leapCd(l)).reduce((s,l)=>s+(parseFloat(l.premium)||0),0); }
-// realized gain/loss = proceeds - premium paid, for closed LEAPs only (optionally filtered by close date range)
-function leapRealizedTotal(filterFn){ return leaps.filter(l=>leapCd(l)&&(!filterFn||filterFn(l))).reduce((s,l)=>s+((parseFloat(l.proceeds)||0)-(parseFloat(l.premium)||0)),0); }
+// premium paid on still-open LEAPs counts as committed capital (per-contract price × 100 × contracts)
+function leapCommitted(){ return leaps.filter(l=>!leapCd(l)).reduce((s,l)=>s+((parseFloat(l.premium)||0)*100*(parseInt(l.contracts)||1)),0); }
+// realized gain/loss = (premium to close - premium paid) × 100 × contracts, for closed LEAPs only (optionally filtered by close date range)
+function leapRealizedTotal(filterFn){ return leaps.filter(l=>leapCd(l)&&(!filterFn||filterFn(l))).reduce((s,l)=>s+(((parseFloat(l.closePremium)||0)-(parseFloat(l.premium)||0))*100*(parseInt(l.contracts)||1)),0); }
 
 // withdrawals are profile-scoped (wt_withdrawals_<id>)
 let withdrawals=(()=>{
@@ -4468,7 +4468,8 @@ function renderLong(){
   const leapRows=sortedLeaps.map(({l,i},rowNum)=>{
     const closed=!!leapCd(l);
     const rowStyle=closed?'opacity:0.6;':'';
-    const gl=closed?((parseFloat(l.proceeds)||0)-(parseFloat(l.premium)||0)):null;
+    const k=parseInt(l.contracts)||1;
+    const gl=closed?(((parseFloat(l.closePremium)||0)-(parseFloat(l.premium)||0))*100*k):null;
     const glCell=closed?`<span class="cv ${gl>=0?'tg':'tr'}" style="font-weight:600;">${fm(gl)}</span>`:`<span class="cv td">—</span>`;
     return `<tr data-lpi="${i}" style="${rowStyle}">
       <td class="row-num">${rowNum+1}</td>
@@ -4478,9 +4479,9 @@ function renderLong(){
       <td class="ecell narrow" data-lpi="${i}" data-lpkey="expiration" onclick="activateLeapCell(this)"><span class="cv td">${fd(l.expiration)}</span></td>
       <td class="ecell narrow" data-lpi="${i}" data-lpkey="strike" onclick="activateLeapCell(this)"><span class="cv">${l.strike!=null?'$'+parseFloat(l.strike).toFixed(2):''}</span></td>
       <td class="ecell xnarrow" data-lpi="${i}" data-lpkey="contracts" onclick="activateLeapCell(this)"><span class="cv td">${l.contracts||''}</span></td>
-      <td class="ecell narrow" data-lpi="${i}" data-lpkey="premium" onclick="activateLeapCell(this)"><span class="cv">${l.premium!=null?fm(parseFloat(l.premium)):''}</span></td>
+      <td class="ecell narrow" data-lpi="${i}" data-lpkey="premium" onclick="activateLeapCell(this)"><span class="cv">${l.premium!=null?'$'+parseFloat(l.premium).toFixed(2):''}</span></td>
       <td class="ecell narrow" data-lpi="${i}" data-lpkey="closeDate" onclick="activateLeapCell(this)"><span class="cv td">${l.closeDate?fd(l.closeDate):'—'}</span></td>
-      <td class="ecell narrow" data-lpi="${i}" data-lpkey="proceeds" onclick="activateLeapCell(this)"><span class="cv">${l.proceeds!=null?fm(parseFloat(l.proceeds)):''}</span></td>
+      <td class="ecell narrow" data-lpi="${i}" data-lpkey="closePremium" onclick="activateLeapCell(this)"><span class="cv">${l.closePremium!=null?'$'+parseFloat(l.closePremium).toFixed(2):''}</span></td>
       <td style="text-align:center;background:var(--surface);border-bottom:1px solid var(--border);">${glCell}</td>
       <td class="ecell wide" data-lpi="${i}" data-lpkey="notes" onclick="activateLeapCell(this)"><span class="cv td">${l.notes||''}</span></td>
       <td style="text-align:center;background:var(--surface);border-bottom:1px solid var(--border);">
@@ -4524,14 +4525,14 @@ function renderLong(){
 
     <div class="sec-hdr" style="margin-top:28px;">
       <span class="sec-title">LEAP Options</span>
-      <span class="td" style="font-size:11px;">Sorted by date · Click any cell to edit · fill in Close Date + Proceeds to close a position</span>
+      <span class="td" style="font-size:11px;">Sorted by date · Premiums are per-contract prices (×100×contracts) · fill in Close Date + Premium Close to close a position</span>
     </div>
     ${leapStats}
     <div class="log-outer" style="max-height:374px;overflow-y:auto;">
       <table class="log-table">
         <thead><tr>
           <th class="col-row">#</th>
-          <th>Date</th><th>Ticker</th><th>Set</th><th>Expiration</th><th>Strike</th><th>Contracts</th><th>Premium Paid</th><th>Close Date</th><th>Proceeds</th><th style="min-width:90px;">Gain/Loss</th><th>Notes</th><th style="min-width:36px;"></th>
+          <th>Date</th><th>Ticker</th><th>Set</th><th>Expiration</th><th>Strike</th><th>Contracts</th><th>Premium Open</th><th>Close Date</th><th>Premium Close</th><th style="min-width:90px;">Gain/Loss</th><th>Notes</th><th style="min-width:36px;"></th>
         </tr></thead>
         <tbody>${leapRows}</tbody>
       </table>
@@ -4626,7 +4627,7 @@ function toggleLongCalledAway(i){
 
 // LEAP options cell editing (mirrors Long Stock Positions pattern)
 let activeLeapCell=null;
-const LEAP_FIELDS={date:'date',ticker:'text',set:'number',expiration:'date',strike:'number',contracts:'number',premium:'number',closeDate:'date',proceeds:'number',notes:'text'};
+const LEAP_FIELDS={date:'date',ticker:'text',set:'number',expiration:'date',strike:'number',contracts:'number',premium:'number',closeDate:'date',closePremium:'number',notes:'text'};
 
 function activateLeapCell(td){
   if(activeLeapCell===td) return;
@@ -4667,7 +4668,7 @@ function commitLeapCell(li,key,rawVal){
 }
 
 function addLeap(){
-  leaps.push({id:uidLeap(),date:today(),ticker:'',set:1,expiration:'',strike:null,contracts:1,premium:null,notes:'',closeDate:'',proceeds:null});
+  leaps.push({id:uidLeap(),date:today(),ticker:'',set:1,expiration:'',strike:null,contracts:1,premium:null,notes:'',closeDate:'',closePremium:null});
   saveLeaps();
   renderLong();
   const outers=document.querySelectorAll('#long-content .log-outer');
