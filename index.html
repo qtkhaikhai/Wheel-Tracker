@@ -898,6 +898,15 @@ tbody td{padding:10px 13px;white-space:nowrap;}
         </div>
         <div class="settings-row">
           <div class="settings-label">
+            <div class="settings-label-title">Clear LEAP Positions</div>
+            <div class="settings-label-sub">Permanently remove all manually entered LEAP option positions.</div>
+          </div>
+          <div class="settings-control">
+            <button class="settings-btn danger" onclick="clearLeaps()">⌫ Clear LEAPs</button>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div class="settings-label">
             <div class="settings-label-title">Clear Withdrawals</div>
             <div class="settings-label-sub">Permanently remove all withdrawal log entries.</div>
           </div>
@@ -1241,6 +1250,7 @@ function selectProfile(id){
   // Load local data for this profile first so app is immediately usable
   trades=JSON.parse(localStorage.getItem('wt_trades_'+p.id)||'[]');
   longs=JSON.parse(localStorage.getItem('wt_longs_'+p.id)||'[]');
+  leaps=JSON.parse(localStorage.getItem('wt_leaps_'+p.id)||'[]');
   withdrawals=JSON.parse(localStorage.getItem('wt_withdrawals_'+p.id)||'[]');
   sharePrices=JSON.parse(localStorage.getItem('wt_sp_'+p.id)||'{}');
   settings=JSON.parse(localStorage.getItem('wt_settings_'+p.id)||'{}');
@@ -1298,7 +1308,7 @@ function switchProfile(){
   _driveFileId=null;
   _driveFolderId=null;
   _driveReady=false;
-  trades=[];longs=[];withdrawals=[];sharePrices={};settings={capital:75000};
+  trades=[];longs=[];leaps=[];withdrawals=[];sharePrices={};settings={capital:75000};
   document.getElementById('header-profile-badge').style.display='none';
   document.getElementById('btn-switch-profile').style.display='none';
   document.getElementById('profile-overlay').style.display='flex';
@@ -1444,8 +1454,8 @@ function _buildPayload(){
   // restore into the correct profile-scoped localStorage keys automatically.
   const activeProfileId=_activeProfile?_activeProfile.id:null;
   return JSON.stringify({
-    _meta:{app:'wheel-tracker',version:2,saved:new Date().toISOString(),tradeCount:trades.length,longsCount:longs.length,profileId:activeProfileId},
-    trades,longs,withdrawals,sharePrices,settings,
+    _meta:{app:'wheel-tracker',version:2,saved:new Date().toISOString(),tradeCount:trades.length,longsCount:longs.length,leapsCount:leaps.length,profileId:activeProfileId},
+    trades,longs,leaps,withdrawals,sharePrices,settings,
     _profileId:activeProfileId,
     _profiles:_profiles
   },null,2);
@@ -1469,7 +1479,7 @@ function _backupLocally(){
   try{
     const pid=_activeProfile?_activeProfile.id:'default';
     const snapshot={
-      trades:[...trades],longs:[...longs],withdrawals:[...withdrawals],sharePrices:{...sharePrices},
+      trades:[...trades],longs:[...longs],leaps:[...leaps],withdrawals:[...withdrawals],sharePrices:{...sharePrices},
       savedAt:Date.now(),tradeCount:trades.length
     };
     localStorage.setItem('wt_backup_'+pid,JSON.stringify(snapshot));
@@ -1487,9 +1497,10 @@ function restoreLocalBackup(){
     if(!confirm(`Restore snapshot from ${when}?\nThis will replace your current ${trades.length} trade(s) with ${snap.trades.length} trade(s).`)) return;
     trades=snap.trades;
     if(Array.isArray(snap.longs)) longs=snap.longs;
+    if(Array.isArray(snap.leaps)) leaps=snap.leaps;
     if(Array.isArray(snap.withdrawals)) withdrawals=snap.withdrawals;
     if(snap.sharePrices&&typeof snap.sharePrices==='object') sharePrices=snap.sharePrices;
-    save(); saveLongs(); saveWithdrawals();
+    save(); saveLongs(); saveLeaps(); saveWithdrawals();
     _renderAll();
     showToast('Restored from local backup snapshot ✓');
   }catch(e){ alert('Failed to parse backup: '+e.message); }
@@ -1617,6 +1628,7 @@ function _applyDriveData(d){
     });
   }
   if(Array.isArray(d.longs)) longs=d.longs;
+  if(Array.isArray(d.leaps)) leaps=d.leaps;
   if(Array.isArray(d.withdrawals)) withdrawals=d.withdrawals;
   if(d.sharePrices&&typeof d.sharePrices==='object') sharePrices=d.sharePrices;
   if(d.settings&&typeof d.settings==='object') settings=Object.assign({},settings,d.settings);
@@ -1628,6 +1640,7 @@ function _applyDriveData(d){
   });
   localStorage.setItem('wt_trades_'+pid,JSON.stringify(trades));
   localStorage.setItem('wt_longs_'+pid,JSON.stringify(longs));
+  localStorage.setItem('wt_leaps_'+pid,JSON.stringify(leaps));
   localStorage.setItem('wt_sp_'+pid,JSON.stringify(sharePrices));
   localStorage.setItem('wt_settings_'+pid,JSON.stringify(settings));
   if(d.settings&&d.settings.theme) applyTheme(d.settings.theme);
@@ -1639,6 +1652,7 @@ async function _saveToDrive(){
   const pid=_activeProfile?_activeProfile.id:'default';
   localStorage.setItem('wt_trades_'+pid,JSON.stringify(trades));
   localStorage.setItem('wt_longs_'+pid,JSON.stringify(longs));
+  localStorage.setItem('wt_leaps_'+pid,JSON.stringify(leaps));
   localStorage.setItem('wt_withdrawals_'+pid,JSON.stringify(withdrawals));
   localStorage.setItem('wt_sp_'+pid,JSON.stringify(sharePrices));
   localStorage.setItem('wt_settings_'+pid,JSON.stringify(settings));
@@ -1867,6 +1881,24 @@ let longs=(()=>{
 })();
 function saveLongs(){ const _lpid=_activeProfile?_activeProfile.id:'default'; localStorage.setItem('wt_longs_'+_lpid,JSON.stringify(longs)); _scheduleDriveSave(); }
 function uidLong(){ return 'l'+Date.now()+Math.random(); }
+
+// leaps (manually entered LEAP option positions) are profile-scoped (wt_leaps_<id>)
+let leaps=(()=>{
+  try{
+    const _pid=_activeProfile?_activeProfile.id:'default';
+    const scoped=localStorage.getItem('wt_leaps_'+_pid);
+    if(scoped!=null) return JSON.parse(scoped);
+    return [];
+  }catch(e){ return []; }
+})();
+function saveLeaps(){ const _lpid=_activeProfile?_activeProfile.id:'default'; localStorage.setItem('wt_leaps_'+_lpid,JSON.stringify(leaps)); _scheduleDriveSave(); }
+function uidLeap(){ return 'lp'+Date.now()+Math.random(); }
+// normalize closeDate the same way trades do — '', null, undefined, '0', 'null' all mean "still open"
+function leapCd(l){ const v=l.closeDate; return (v&&v!=='0'&&v!=='null'&&String(v).trim()!=='')?v:null; }
+// premium paid on still-open LEAPs counts as committed capital
+function leapCommitted(){ return leaps.filter(l=>!leapCd(l)).reduce((s,l)=>s+(parseFloat(l.premium)||0),0); }
+// realized gain/loss = proceeds - premium paid, for closed LEAPs only (optionally filtered by close date range)
+function leapRealizedTotal(filterFn){ return leaps.filter(l=>leapCd(l)&&(!filterFn||filterFn(l))).reduce((s,l)=>s+((parseFloat(l.proceeds)||0)-(parseFloat(l.premium)||0)),0); }
 
 // withdrawals are profile-scoped (wt_withdrawals_<id>)
 let withdrawals=(()=>{
@@ -2169,17 +2201,18 @@ function _renderSummaryInner(container){
     });
 
   const longCost=longs.filter(l=>!l.calledAway).reduce((s,l)=>s+(parseFloat(l.shares)||0)*(parseFloat(l.price)||0),0);
+  const leapCommittedCost=leapCommitted();
   const totalWithdrawnSummary=(withdrawals||[]).reduce((s,w)=>s+(parseFloat(w.amount)||0),0);
-  const committed=cspCollat+assignedCost+longCost;
-  // cashOnHand matches Dashboard: (capital + realized option P&L + realized share gains) - committed - withdrawals
-  const cashOnHand=(cap+closedAll.reduce((s,t)=>s+(calcPL(t)||0),0)+shareApprAllTime)-committed-totalWithdrawnSummary;
+  const committed=cspCollat+assignedCost+longCost+leapCommittedCost;
+  // cashOnHand matches Dashboard: (capital + realized option P&L + realized share gains + realized LEAP gains) - committed - withdrawals
+  const cashOnHand=(cap+closedAll.reduce((s,t)=>s+(calcPL(t)||0),0)+shareApprAllTime+leapRealizedTotal())-committed-totalWithdrawnSummary;
   const buyingPower=Math.max(0,cap-committed);
   const bpUtil=cap>0?committed/cap*100:0;
   const cashSecuredPct=cap>0?cspCollat/cap*100:0;
   const activeTickers=new Set(openAll.map(t=>t.ticker)).size;
 
   // ──────── portfolio value (capital + all realized + unrealized share MTM if prices set)
-  const totalRealizedAllTime=closedAll.reduce((s,t)=>s+(calcPL(t)||0),0);
+  const totalRealizedAllTime=closedAll.reduce((s,t)=>s+(calcPL(t)||0),0)+leapRealizedTotal();
   let unrealizedShares=0;
   Object.keys(inv).forEach(tk=>{
     const cp=sharePrices[tk];
@@ -2193,8 +2226,9 @@ function _renderSummaryInner(container){
   const last30Cutoff=new Date(Date.now()-30*86400e3);
   const monthlyIncome=closedAll.filter(t=>{const c=cd(t); return c&&new Date(c)>=last30Cutoff;}).reduce((s,t)=>s+(calcPL(t)||0),0);
 
-  // total income for the period = realized option P&L + realized share appreciation (called away)
-  const incomeInRange=realizedInRange+shareApprInRange;
+  // total income for the period = realized option P&L + realized share appreciation (called away) + realized LEAP gains
+  const leapRealizedInRange=leapRealizedTotal(l=>inSummaryRange(leapCd(l)));
+  const incomeInRange=realizedInRange+shareApprInRange+leapRealizedInRange;
 
   // annualized return for the selected period (based on total income)
   const periodReturn=cap>0?(incomeInRange/cap)*(365/rngDays)*100:null;
@@ -2756,7 +2790,7 @@ function status(t){ return !cd(t)?'Open':t.assigned==='Yes'?'Assigned':'Closed';
 
 function getStats(){
   const closed=trades.filter(t=>cd(t)), open=trades.filter(t=>!cd(t));
-  const realized=closed.reduce((s,t)=>s+(calcPL(t)||0),0);
+  const realized=closed.reduce((s,t)=>s+(calcPL(t)||0),0)+leapRealizedTotal();
   const wins=closed.filter(t=>(calcPL(t)||0)>0).length;
   const ars=closed.map(calcARActual).filter(v=>v!=null);
   const avgAR=ars.length?ars.reduce((a,b)=>a+b,0)/ars.length:null;
@@ -3229,10 +3263,11 @@ function renderDashboard(){
   });
   const assignedCostBasis=Object.values(inventory).reduce((sum,g)=>sum+g.lots.reduce((s,l)=>s+l.shares*l.costBasis,0),0);
 
-  // Also include long positions cost
+  // Also include long positions cost + open LEAP premium
   const longCost=longs.filter(l=>l.ticker&&l.shares&&l.price&&!l.calledAway).reduce((s,l)=>(parseFloat(l.shares)||0)*(parseFloat(l.price)||0)+s,0);
+  const leapCommittedCost=leapCommitted();
 
-  const cashCommitted=cashSecuredPuts+assignedCostBasis+longCost;
+  const cashCommitted=cashSecuredPuts+assignedCostBasis+longCost+leapCommittedCost;
   const cashOnHand=total-cashCommitted;
   const cashPct=total>0?Math.round(cashOnHand/total*100):0;
 
@@ -3242,7 +3277,7 @@ function renderDashboard(){
     <div class="stat-card"><div class="stat-label">Realized P&amp;L</div><div class="stat-val ${s.realized>=0?'g':'r'}">${fm(s.realized)}</div><div class="stat-sub ${s.realized>=0?'up':'dn'}">${fp(s.realized/getCapital()*100)} total return</div></div>
     <div class="stat-card"><div class="stat-label">Open Puts</div><div class="stat-val">${openPuts.length}</div><div class="stat-sub">${fm(cashSecuredPuts)} collateral</div></div>
     <div class="stat-card"><div class="stat-label">Open Calls</div><div class="stat-val">${openCalls.length}</div><div class="stat-sub">${fm(callsNotional)} notional</div></div>
-    <div class="stat-card"><div class="stat-label">Assigned to Shares</div><div class="stat-val r">${fm(assignedCostBasis)}</div><div class="stat-sub">${fm(longCost)} long positions</div></div>`;
+    <div class="stat-card"><div class="stat-label">Assigned to Shares</div><div class="stat-val r">${fm(assignedCostBasis)}</div><div class="stat-sub">${fm(longCost)} long &middot; ${fm(leapCommittedCost)} LEAPs</div></div>`;
 
   // open table
   const open=trades.filter(t=>!cd(t));
@@ -4411,6 +4446,49 @@ function renderLong(){
     </tr>`;
   }).join('');
 
+  // ── LEAP options stats + rows ──
+  const activeLeaps=leaps.filter(l=>!leapCd(l));
+  const closedLeapsCount=leaps.filter(l=>leapCd(l)).length;
+  const leapPremiumCommitted=leapCommitted();
+  const leapRealizedGL=leapRealizedTotal();
+
+  const leapStats=leaps.length?`
+    <div class="stat-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:20px;">
+      <div class="stat-card"><div class="stat-label">Active LEAPs</div><div class="stat-val">${activeLeaps.length}${closedLeapsCount?' <span style="font-size:12px;color:var(--text3);">+'+closedLeapsCount+' closed</span>':''}</div></div>
+      <div class="stat-card"><div class="stat-label">Premium Committed</div><div class="stat-val r">${fm(leapPremiumCommitted)}</div></div>
+      <div class="stat-card"><div class="stat-label">Realized Gain/Loss</div><div class="stat-val ${leapRealizedGL>=0?'g':'r'}">${fm(leapRealizedGL)}</div></div>
+      <div class="stat-card"><div class="stat-label">Total LEAPs</div><div class="stat-val">${leaps.length}</div></div>
+    </div>`:'';
+
+  const sortedLeaps=leaps.map((l,i)=>({l,i})).sort((a,b)=>{
+    const da=a.l.date?new Date(a.l.date+'T12:00:00'):new Date(0);
+    const db=b.l.date?new Date(b.l.date+'T12:00:00'):new Date(0);
+    return db-da;
+  });
+  const leapRows=sortedLeaps.map(({l,i},rowNum)=>{
+    const closed=!!leapCd(l);
+    const rowStyle=closed?'opacity:0.6;':'';
+    const gl=closed?((parseFloat(l.proceeds)||0)-(parseFloat(l.premium)||0)):null;
+    const glCell=closed?`<span class="cv ${gl>=0?'tg':'tr'}" style="font-weight:600;">${fm(gl)}</span>`:`<span class="cv td">—</span>`;
+    return `<tr data-lpi="${i}" style="${rowStyle}">
+      <td class="row-num">${rowNum+1}</td>
+      <td class="ecell narrow" data-lpi="${i}" data-lpkey="date" onclick="activateLeapCell(this)"><span class="cv td">${fd(l.date)}</span></td>
+      <td class="ecell narrow" data-lpi="${i}" data-lpkey="ticker" onclick="activateLeapCell(this)"><span class="cv"><span class="ticker">${l.ticker||''}</span></span></td>
+      <td class="ecell xnarrow" data-lpi="${i}" data-lpkey="set" onclick="activateLeapCell(this)"><span class="cv td">${l.set||1}</span></td>
+      <td class="ecell narrow" data-lpi="${i}" data-lpkey="expiration" onclick="activateLeapCell(this)"><span class="cv td">${fd(l.expiration)}</span></td>
+      <td class="ecell narrow" data-lpi="${i}" data-lpkey="strike" onclick="activateLeapCell(this)"><span class="cv">${l.strike!=null?'$'+parseFloat(l.strike).toFixed(2):''}</span></td>
+      <td class="ecell xnarrow" data-lpi="${i}" data-lpkey="contracts" onclick="activateLeapCell(this)"><span class="cv td">${l.contracts||''}</span></td>
+      <td class="ecell narrow" data-lpi="${i}" data-lpkey="premium" onclick="activateLeapCell(this)"><span class="cv">${l.premium!=null?fm(parseFloat(l.premium)):''}</span></td>
+      <td class="ecell narrow" data-lpi="${i}" data-lpkey="closeDate" onclick="activateLeapCell(this)"><span class="cv td">${l.closeDate?fd(l.closeDate):'—'}</span></td>
+      <td class="ecell narrow" data-lpi="${i}" data-lpkey="proceeds" onclick="activateLeapCell(this)"><span class="cv">${l.proceeds!=null?fm(parseFloat(l.proceeds)):''}</span></td>
+      <td style="text-align:center;background:var(--surface);border-bottom:1px solid var(--border);">${glCell}</td>
+      <td class="ecell wide" data-lpi="${i}" data-lpkey="notes" onclick="activateLeapCell(this)"><span class="cv td">${l.notes||''}</span></td>
+      <td style="text-align:center;background:var(--surface);border-bottom:1px solid var(--border);">
+        <button onclick="deleteLeap(${i})" style="background:none;border:none;color:var(--text3);cursor:pointer;padding:4px 8px;border-radius:4px;font-size:13px;" onmouseover="this.style.color='var(--red)'" onmouseout="this.style.color='var(--text3)'">✕</button>
+      </td>
+    </tr>`;
+  }).join('');
+
   // withdrawal log rows — sorted by date desc
   const sortedWithdrawals=(withdrawals||[]).map((w,i)=>({w,i})).sort((a,b)=>{
     const da=a.w.date?new Date(a.w.date+'T12:00:00'):new Date(0);
@@ -4442,6 +4520,22 @@ function renderLong(){
         <tbody>${rows}</tbody>
       </table>
       <button class="add-row-btn" onclick="addLong()">＋ Add position</button>
+    </div>
+
+    <div class="sec-hdr" style="margin-top:28px;">
+      <span class="sec-title">LEAP Options</span>
+      <span class="td" style="font-size:11px;">Sorted by date · Click any cell to edit · fill in Close Date + Proceeds to close a position</span>
+    </div>
+    ${leapStats}
+    <div class="log-outer" style="max-height:374px;overflow-y:auto;">
+      <table class="log-table">
+        <thead><tr>
+          <th class="col-row">#</th>
+          <th>Date</th><th>Ticker</th><th>Set</th><th>Expiration</th><th>Strike</th><th>Contracts</th><th>Premium Paid</th><th>Close Date</th><th>Proceeds</th><th style="min-width:90px;">Gain/Loss</th><th>Notes</th><th style="min-width:36px;"></th>
+        </tr></thead>
+        <tbody>${leapRows}</tbody>
+      </table>
+      <button class="add-row-btn" onclick="addLeap()">＋ Add LEAP</button>
     </div>
 
     <div class="sec-hdr" style="margin-top:28px;">
@@ -4528,6 +4622,64 @@ function toggleLongCalledAway(i){
   saveLongs();
   renderLong();
   renderShares();
+}
+
+// LEAP options cell editing (mirrors Long Stock Positions pattern)
+let activeLeapCell=null;
+const LEAP_FIELDS={date:'date',ticker:'text',set:'number',expiration:'date',strike:'number',contracts:'number',premium:'number',closeDate:'date',proceeds:'number',notes:'text'};
+
+function activateLeapCell(td){
+  if(activeLeapCell===td) return;
+  deactivateLeapCell();
+  activeLeapCell=td;
+  td.classList.add('focused');
+  const li=parseInt(td.dataset.lpi), key=td.dataset.lpkey;
+  const l=leaps[li];
+  td.querySelector('.cv').style.display='none';
+  let el;
+  if(LEAP_FIELDS[key]==='date'){ el=document.createElement('input'); el.type='date'; el.value=l[key]||''; }
+  else if(LEAP_FIELDS[key]==='number'){ el=document.createElement('input'); el.type='number'; el.step='any'; el.value=l[key]??''; }
+  else { el=document.createElement('input'); el.type='text'; el.value=l[key]||''; if(key==='ticker') el.style.textTransform='uppercase'; }
+  el.addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key==='Tab'){e.preventDefault();commitLeapCell(li,key,el.value);deactivateLeapCell();} if(e.key==='Escape') deactivateLeapCell(); });
+  el.addEventListener('blur',()=>{ commitLeapCell(li,key,el.value); deactivateLeapCell(); });
+  td.appendChild(el); el.focus();
+  if(el.type==='text'||el.type==='number') el.select();
+}
+
+function deactivateLeapCell(){
+  if(!activeLeapCell) return;
+  activeLeapCell.classList.remove('focused');
+  const inp=activeLeapCell.querySelector('input');
+  if(inp) inp.remove();
+  const cv=activeLeapCell.querySelector('.cv');
+  if(cv) cv.style.display='';
+  activeLeapCell=null;
+}
+
+function commitLeapCell(li,key,rawVal){
+  let val=rawVal;
+  if(LEAP_FIELDS[key]==='number') val=rawVal===''?null:parseFloat(rawVal);
+  if(key==='ticker') val=String(rawVal).toUpperCase().trim();
+  if(leaps[li][key]===val) return;
+  leaps[li][key]=val;
+  saveLeaps();
+  setTimeout(()=>{ renderLong(); renderDashboard(); },10);
+}
+
+function addLeap(){
+  leaps.push({id:uidLeap(),date:today(),ticker:'',set:1,expiration:'',strike:null,contracts:1,premium:null,notes:'',closeDate:'',proceeds:null});
+  saveLeaps();
+  renderLong();
+  const outers=document.querySelectorAll('#long-content .log-outer');
+  if(outers[1]) outers[1].scrollTop=outers[1].scrollHeight;
+}
+
+function deleteLeap(i){
+  if(!confirm('Delete this LEAP position?')) return;
+  leaps.splice(i,1);
+  saveLeaps();
+  renderLong();
+  renderDashboard();
 }
 
 // ── WITHDRAWAL LOG ────────────────────────────────────────────
@@ -5072,6 +5224,7 @@ function exportBackup(){
     _meta:{app:'wheel-tracker',version:1,exported:new Date().toISOString(),profileId:activeProfileId},
     trades:trades,
     longs:longs,
+    leaps:leaps,
     withdrawals:withdrawals,
     sharePrices:sharePrices,
     settings:settings,
@@ -5098,7 +5251,7 @@ function onBackupFile(e){
       if(!data||typeof data!=='object'||!Array.isArray(data.trades)){
         alert('That file does not look like a wheel-tracker backup.'); return;
       }
-      const n=data.trades.length, nL=Array.isArray(data.longs)?data.longs.length:0;
+      const n=data.trades.length, nL=Array.isArray(data.longs)?data.longs.length:0, nLp=Array.isArray(data.leaps)?data.leaps.length:0;
       const _curProf=_activeProfile?_activeProfile.name:'(none)';
       let _profileWarn='';
       if(data._profileId&&_activeProfile&&data._profileId!==_activeProfile.id){
@@ -5106,7 +5259,7 @@ function onBackupFile(e){
         const _srcName=_srcProf?_srcProf.name:data._profileId;
         _profileWarn='\n\n⚠️ This backup is from "'+_srcName+'" but you are on "'+_curProf+'". Data will load into "'+_curProf+'".';
       }
-      if(!confirm('Restore '+n+' trade'+(n!==1?'s':'')+' and '+nL+' long'+(nL!==1?'s':'')+' into profile "'+_curProf+'"? This will REPLACE current data.'+_profileWarn)) return;
+      if(!confirm('Restore '+n+' trade'+(n!==1?'s':'')+', '+nL+' long'+(nL!==1?'s':'')+', and '+nLp+' LEAP'+(nLp!==1?'s':'')+' into profile "'+_curProf+'"? This will REPLACE current data.'+_profileWarn)) return;
       pushUndo('restore backup');
 
       // Restore profile identity from backup so data lands in the right scoped keys
@@ -5126,6 +5279,7 @@ function onBackupFile(e){
 
       trades=data.trades;
       longs=Array.isArray(data.longs)?data.longs:[];
+      leaps=Array.isArray(data.leaps)?data.leaps:[];
       withdrawals=Array.isArray(data.withdrawals)?data.withdrawals:[];
       sharePrices=(data.sharePrices&&typeof data.sharePrices==='object')?data.sharePrices:{};
       if(data.settings&&typeof data.settings==='object'){
@@ -5133,12 +5287,13 @@ function onBackupFile(e){
         const _rspid=_activeProfile?_activeProfile.id:'default';
         localStorage.setItem('wt_settings_'+_rspid,JSON.stringify(settings));
       }
-      save(); saveLongs(); saveWithdrawals(); saveSharePrices();
+      save(); saveLongs(); saveLeaps(); saveWithdrawals(); saveSharePrices();
       try { renderLog(); } catch(err){ console.error(err); }
       try { renderDerived(); } catch(err){ console.error(err); }
       try { renderSummary(); } catch(err){ console.error(err); }
       try { renderSettings(); } catch(err){ console.error(err); }
-      showToast(`Restored ${n} trades, ${nL} longs`, false);
+      try { renderLong(); } catch(err){ console.error(err); }
+      showToast(`Restored ${n} trades, ${nL} longs, ${nLp} LEAPs`, false);
     } catch(err){
       console.error('backup restore:',err);
       alert('Could not read that JSON file: '+err.message);
@@ -5164,6 +5319,15 @@ function clearLongs(){
   showToast('Long positions cleared', false);
 }
 
+function clearLeaps(){
+  if(!confirm('Clear all LEAP option positions?')) return;
+  leaps=[];
+  saveLeaps();
+  renderLong();
+  renderDashboard();
+  showToast('LEAP positions cleared', false);
+}
+
 function clearWithdrawals(){
   if(!confirm('Clear all withdrawal entries?')) return;
   withdrawals=[];
@@ -5176,7 +5340,7 @@ function resetEverything(){
   if(!confirm('This will permanently delete ALL data — trades, long positions, share prices, and settings — and reload the app fresh.\n\nAre you sure?')) return;
   if(!confirm('Last chance: click OK to wipe everything and start fresh.')) return;
   localStorage.clear();
-  trades=[]; longs=[]; withdrawals=[]; sharePrices={}; settings={capital:75000};
+  trades=[]; longs=[]; leaps=[]; withdrawals=[]; sharePrices={}; settings={capital:75000};
   editingRidx=null; editDraft={};
   location.reload();
 }
