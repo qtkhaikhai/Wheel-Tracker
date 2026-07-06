@@ -2280,9 +2280,9 @@ function _renderSummaryInner(container){
   // ──────── KPI CARDS
   const kpis=`
     <div class="sum-kpi-grid">
-      <div class="sum-kpi"><div class="sum-kpi-label">Premium Collected</div><div class="sum-kpi-val tg">${fm(premiumInRange)}</div><div class="sum-kpi-sub">in period</div></div>
       <div class="sum-kpi"><div class="sum-kpi-label">Realized P&L</div><div class="sum-kpi-val ${realizedInRange>=0?'tg':'tr'}">${fm(realizedInRange)}</div><div class="sum-kpi-sub">${closedInRange.length} trades</div></div>
       <div class="sum-kpi"><div class="sum-kpi-label">Share Gains (Called Away)</div><div class="sum-kpi-val ${shareApprInRange>=0?'tg':'tr'}">${fm(shareApprInRange)}</div><div class="sum-kpi-sub">${fm(shareApprAllTime)} all-time</div></div>
+      <div class="sum-kpi"><div class="sum-kpi-label">LEAP Gains</div><div class="sum-kpi-val ${leapRealizedInRange>=0?'tg':'tr'}">${fm(leapRealizedInRange)}</div><div class="sum-kpi-sub">${fm(leapRealizedTotal())} all-time</div></div>
       <div class="sum-kpi"><div class="sum-kpi-label">Contracts</div><div class="sum-kpi-val">${contractsInRange}</div><div class="sum-kpi-sub">Ks closed</div></div>
       <div class="sum-kpi"><div class="sum-kpi-label">Assignments</div><div class="sum-kpi-val ${assignedInRange>0?'ta':''}">${assignedInRange}</div><div class="sum-kpi-sub">in period</div></div>
       <div class="sum-kpi"><div class="sum-kpi-label">Avg Prem / Trade</div><div class="sum-kpi-val">${fm(avgPremPerTrade)}</div><div class="sum-kpi-sub">net of fees</div></div>
