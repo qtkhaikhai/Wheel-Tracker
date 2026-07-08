@@ -8025,6 +8025,8 @@ function _dcfProjBuildTable(){
     h+='<tr style="border-bottom:1px solid var(--border);">'+lbl('EPS'); for(t=0;t<=yrs;t++) h+=td(cmp('pjc-y'+t+'-eps')); h+='</tr>';
   }
   var mLbl=isPS?'P/S':'PE';
+  h+='<tr>'+lbl('CURRENT '+(isPS?'P/S':'P/E')); h+=td('<span id="pjc-pe0" style="font-weight:700;color:var(--text);">—</span>');
+  for(t=1;t<=yrs;t++) h+=td(''); h+='</tr>';
   h+='<tr>'+lbl(mLbl+' LOW EST'); for(t=0;t<=yrs;t++) h+=td(inp('pj-'+s+'-y'+t+'-pl',t===0?'15':'15')); h+='</tr>';
   h+='<tr style="border-bottom:1px solid var(--border);">'+lbl(mLbl+' HIGH EST'); for(t=0;t<=yrs;t++) h+=td(inp('pj-'+s+'-y'+t+'-ph',t===0?'25':'25')); h+='</tr>';
   // PRICE + CAGR (computed, amber-style emphasis like 1000x)
@@ -8052,6 +8054,12 @@ function _dcfRecalcProj(){
   var nh=document.getElementById('pj-ni-hist');
   if(nh){ if(_dcf.niSeries&&_dcf.niSeries.length){ nh.innerHTML='EDGAR net income: '+_dcf.niSeries.map(function(e){ return e.fy+':'+_dcfMoney(e.val); }).join('  '); } else nh.innerHTML=''; }
   var p=_dcfProjParams(),isPS=(p.method==='ps');
+  // current multiple: price / EPS (P/E) or price / rev-per-share (P/S)
+  (function(){
+    var b=isPS?((isFinite(p.rev0)&&p.shares0>0)?p.rev0/p.shares0:NaN):((isFinite(p.ni0)&&p.shares0>0)?p.ni0/p.shares0:NaN);
+    var cur=(isFinite(p.price)&&p.price>0&&isFinite(b)&&b>0)?p.price/b:NaN;
+    var el=document.getElementById('pjc-pe0'); if(el) el.textContent=isFinite(cur)?cur.toFixed(1)+'\u00d7':'—';
+  })();
   var scMeta=_PJ_SCENS.filter(function(x){return x.k===p.scen;})[0];
   var m=null;
   if(isFinite(p.rev0)&&p.rev0>0&&isFinite(p.shares0)&&p.shares0>0&&(isPS||isFinite(p.ni0))) m=_dcfProjModel(p);
