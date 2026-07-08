@@ -7770,12 +7770,65 @@ function _dcfHydrateTicker(t){
   if(rec) _dcfStatus('Loaded saved analysis for '+t+'.','ok');
   _dcf.ticker=t; _dcfRecalc();
 }
+// ---- snapshots (auto-named TICKER YYYY-MM-DD) -------------------------------
+function _dcfSnaps(){ try{ return JSON.parse(localStorage.getItem('wt_dcf_snapshots')||'{}'); }catch(e){ return {}; } }
+function _dcfSnapsWrite(o){ try{ localStorage.setItem('wt_dcf_snapshots',JSON.stringify(o)); }catch(e){} }
+function _dcfSnapName(){
+  var t=(_dcfVal('dcf-ticker')||'').trim().toUpperCase(); if(!t) return null;
+  var d=new Date();
+  return t+' '+d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+function _dcfSnapRefresh(){
+  var sel=document.getElementById('dcf-snap-sel'); if(!sel) return;
+  var cur=sel.value,snaps=_dcfSnaps();
+  var names=Object.keys(snaps).sort(function(a,b){ return (snaps[b].ts||0)-(snaps[a].ts||0); });
+  sel.innerHTML='<option value="">— snapshots —</option>'+names.map(function(n){ return '<option value="'+n+'"'+(n===cur?' selected':'')+'>'+n+'</option>'; }).join('');
+}
+function _dcfSnapSave(){
+  var name=_dcfSnapName();
+  if(!name){ _dcfStatus('Enter a ticker before saving a snapshot.','err'); return; }
+  var snaps=_dcfSnaps();
+  var existed=!!snaps[name];
+  snaps[name]={raw:_dcfReadRaw(),fcfSeries:_dcf.fcfSeries||[],revSeries:_dcf.revSeries||[],niSeries:_dcf.niSeries||[],mode:_dcf.mode,ts:Date.now()};
+  _dcfSnapsWrite(snaps); _dcfSnapRefresh();
+  var sel=document.getElementById('dcf-snap-sel'); if(sel) sel.value=name;
+  _dcfStatus((existed?'Updated':'Saved')+' snapshot "'+name+'".','ok');
+  _dcfDriveDot('busy');
+  if(_dcf.saveTimer) clearTimeout(_dcf.saveTimer);
+  _dcf.saveTimer=setTimeout(function(){ _dcfDriveSave().then(function(){_dcfDriveDot('ok');}).catch(function(){_dcfDriveDot('idle');}); },1500);
+}
+function _dcfSnapLoad(name){
+  if(!name) return;
+  var rec=_dcfSnaps()[name]; if(!rec){ _dcfStatus('Snapshot not found.','err'); return; }
+  var t=name.split(' ')[0];
+  var ti=document.getElementById('dcf-ticker'); if(ti) ti.value=t;
+  _dcf.ticker=t;
+  _dcf.raw=rec.raw||{};
+  if(rec.mode&&rec.mode!==_dcf.mode) _dcfSetMode(rec.mode);
+  _dcfApplyRaw(_dcf.raw);
+  if(_dcf.mode==='proj'&&document.getElementById('pj-table-wrap')) _dcfProjBuildTable();
+  _dcf.fcfSeries=rec.fcfSeries||[]; _dcf.revSeries=rec.revSeries||[]; _dcf.niSeries=rec.niSeries||[];
+  _dcfRecalc();
+  _dcfStatus('Loaded snapshot "'+name+'".','ok');
+}
+function _dcfSnapDelete(){
+  var sel=document.getElementById('dcf-snap-sel'); if(!sel||!sel.value){ _dcfStatus('Select a snapshot to delete.','err'); return; }
+  var name=sel.value;
+  if(!confirm('Delete snapshot "'+name+'"?')) return;
+  var snaps=_dcfSnaps(); delete snaps[name]; _dcfSnapsWrite(snaps);
+  sel.value=''; _dcfSnapRefresh();
+  _dcfStatus('Deleted snapshot "'+name+'".','ok');
+  _dcfDriveDot('busy');
+  if(_dcf.saveTimer) clearTimeout(_dcf.saveTimer);
+  _dcf.saveTimer=setTimeout(function(){ _dcfDriveSave().then(function(){_dcfDriveDot('ok');}).catch(function(){_dcfDriveDot('idle');}); },1500);
+}
+
 async function _dcfDriveSave(){
   if(typeof _ensureDriveFolder!=='function'||typeof _driveReq!=='function') return;
   var folder=await _ensureDriveFolder(),name='dcf-analyses.json';
   var q=encodeURIComponent('name="'+name+'" and "'+folder+'" in parents and trashed=false');
   var list=await _driveReq('GET','https://www.googleapis.com/drive/v3/files?q='+q+'&fields=files(id,name)');
-  var content=JSON.stringify({_meta:{app:'wheel-tracker-dcf',updated:new Date().toISOString()},analyses:_dcfStore()});
+  var content=JSON.stringify({_meta:{app:'wheel-tracker-dcf',updated:new Date().toISOString()},analyses:_dcfStore(),snapshots:_dcfSnaps()});
   var boundary='----wtdcf'+Date.now(),meta=JSON.stringify({name:name,parents:[folder]});
   var body='--'+boundary+'\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n'+meta+'\r\n--'+boundary+'\r\nContent-Type: application/json\r\n\r\n'+content+'\r\n--'+boundary+'--';
   var ct='multipart/related; boundary='+boundary;
@@ -7792,7 +7845,7 @@ async function _dcfDriveLoad(){
     if(!list.files||!list.files.length){ _dcfStatus('No DCF file in your Drive yet — save one first.','err'); return; }
     var raw=await _driveReq('GET','https://www.googleapis.com/drive/v3/files/'+list.files[0].id+'?alt=media');
     var data=(typeof raw==='string')?JSON.parse(raw):raw;
-    if(data&&data.analyses){ localStorage.setItem('wt_dcf_store',JSON.stringify(data.analyses)); _dcfStatus('Loaded DCF analyses from Drive.','ok'); _dcfDriveDot('ok'); if(_dcf.ticker) _dcfHydrateTicker(_dcf.ticker); }
+    if(data&&data.analyses){ localStorage.setItem('wt_dcf_store',JSON.stringify(data.analyses)); if(data.snapshots) _dcfSnapsWrite(data.snapshots); _dcfSnapRefresh(); _dcfStatus('Loaded DCF analyses from Drive.','ok'); _dcfDriveDot('ok'); if(_dcf.ticker) _dcfHydrateTicker(_dcf.ticker); }
   }catch(e){ _dcfStatus('Drive load failed: '+(e.message||e)+' (sign in via Settings → Save to Drive first).','err'); }
 }
 
@@ -7804,6 +7857,7 @@ function renderDCF(){
   if(!_dcf.built){
     host.innerHTML=_dcfShell(); _dcf.built=true;
     var tk=document.getElementById('dcf-ticker'); if(tk){ tk.addEventListener('change',function(){ _dcfHydrateTicker(tk.value); }); }
+    _dcfSnapRefresh();
   }
   _dcfSetMode(_dcf.mode||'dcf');
 }
@@ -7829,6 +7883,9 @@ function _dcfShell(){
     '<button class="btn-primary" onclick="_dcfFetchEdgar()">↧ Fetch fundamentals (EDGAR)</button>'+
     '<button class="settings-btn" onclick="_dcfFetchPrice()">⟳ Price (Tradier)</button>'+
     '<button class="settings-btn" onclick="_dcfDriveLoad()">↓ Load DCF from Drive</button>'+
+    '<button class="settings-btn" onclick="_dcfSnapSave()">💾 Save snapshot</button>'+
+    '<select id="dcf-snap-sel" onchange="_dcfSnapLoad(this.value)" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:7px;border-radius:6px;max-width:190px;"><option value="">— snapshots —</option></select>'+
+    '<button class="settings-btn" onclick="_dcfSnapDelete()" title="Delete selected snapshot">✕</button>'+
     '<span style="display:inline-flex;align-items:center;gap:6px;font-size:10px;color:var(--text3);font-family:var(--mono);"><span id="dcf-drive-dot" style="width:6px;height:6px;border-radius:50%;background:var(--text3);"></span>auto-syncs to Drive</span>'+
   '</div>'+
   '<div id="dcf-status" style="font-size:11px;font-family:var(--mono);min-height:16px;margin-bottom:10px;color:var(--text2);"></div>'+
