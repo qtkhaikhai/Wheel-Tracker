@@ -7845,7 +7845,14 @@ async function _dcfDriveLoad(){
     if(!list.files||!list.files.length){ _dcfStatus('No DCF file in your Drive yet — save one first.','err'); return; }
     var raw=await _driveReq('GET','https://www.googleapis.com/drive/v3/files/'+list.files[0].id+'?alt=media');
     var data=(typeof raw==='string')?JSON.parse(raw):raw;
-    if(data&&data.analyses){ localStorage.setItem('wt_dcf_store',JSON.stringify(data.analyses)); if(data.snapshots) _dcfSnapsWrite(data.snapshots); _dcfSnapRefresh(); _dcfStatus('Loaded DCF analyses from Drive.','ok'); _dcfDriveDot('ok'); if(_dcf.ticker) _dcfHydrateTicker(_dcf.ticker); }
+    if(data&&data.analyses){
+      // merge per-ticker by timestamp — newer record wins, so a stale Drive file can't clobber fresh local data
+      var localA=_dcfStore(),remoteA=data.analyses||{};
+      Object.keys(remoteA).forEach(function(k){ var l=localA[k],r=remoteA[k]; if(!l||(r&&(r.ts||0)>=(l.ts||0))) localA[k]=r; });
+      localStorage.setItem('wt_dcf_store',JSON.stringify(localA));
+      if(data.snapshots){ var localS=_dcfSnaps(),remoteS=data.snapshots||{}; Object.keys(remoteS).forEach(function(k){ var l=localS[k],r=remoteS[k]; if(!l||(r&&(r.ts||0)>=(l.ts||0))) localS[k]=r; }); _dcfSnapsWrite(localS); }
+      _dcfSnapRefresh(); _dcfStatus('Loaded DCF analyses from Drive.','ok'); _dcfDriveDot('ok'); if(_dcf.ticker) _dcfHydrateTicker(_dcf.ticker);
+    }
   }catch(e){ _dcfStatus('Drive load failed: '+(e.message||e)+' (sign in via Settings → Save to Drive first).','err'); }
 }
 
