@@ -2005,6 +2005,9 @@ function leapCommitted(){ return leaps.filter(l=>!leapCd(l)).reduce((s,l)=>s+((p
 // realized gain/loss = (premium to close - premium paid) × 100 × contracts, for closed LEAPs only (optionally filtered by close date range)
 // realized gain/loss for a single closed LEAP position
 function leapGL(l){ return ((parseFloat(l.closePremium)||0)-(parseFloat(l.premium)||0))*100*(parseInt(l.contracts)||1); }
+// realized return % = final P&L / collateral (strike notional) for trades; premium paid is the capital basis for LEAPs
+function tradeRetPct(t){ const c=(parseFloat(t.strike)||0)*(parseInt(t.contracts)||1)*100; const pl=calcPL(t); return (c&&pl!=null)?pl/c*100:null; }
+function leapRetPct(l){ const b=(parseFloat(l.premium)||0)*(parseInt(l.contracts)||1)*100; return b?leapGL(l)/b*100:null; }
 function leapRealizedTotal(filterFn){ return leaps.filter(l=>leapCd(l)&&(!filterFn||filterFn(l))).reduce((s,l)=>s+leapGL(l),0); }
 
 // withdrawals are profile-scoped (wt_withdrawals_<id>)
@@ -4122,15 +4125,18 @@ function showDayDrilldown(dateStr){
     const prem=(parseFloat(t.premium)||0)*k*100;
     const stCls=t.assigned==='Yes'?'ba':'bcl';
     const stLbl=t.assigned==='Yes'?'ASSIGNED':'CLOSED';
+    const rp=tradeRetPct(t);
     return `<div class="week-trade-row" style="padding:8px 0;">
       <span style="display:flex;align-items:center;gap:8px;">
         <span class="ticker wd-ticker-link" onclick="closeWeeklyModal();showWheelDetails('${t.ticker}')">${t.ticker}</span>
         <span class="badge ${t.type==='P'?'bp':'bc'}" style="font-size:9px;">${t.type==='P'?'PUT':'CALL'}</span>
         <span style="color:var(--text2);font-size:11px;">$${parseFloat(t.strike||0).toFixed(2)} · ${k}K</span>
         <span class="badge ${stCls}" style="font-size:9px;">${stLbl}</span>
+        <span style="color:var(--text3);font-size:10px;">Opened ${fd(t.openDate)}</span>
       </span>
       <span style="display:flex;align-items:center;gap:14px;">
         <span style="color:var(--text3);font-size:10px;">Prem ${fm(prem)}</span>
+        ${rp!=null?`<span class="chip">${rp.toFixed(2)}%</span>`:''}
         <span class="${pl>=0?'tg':'tr'}" style="font-weight:600;">${fm(pl)}</span>
       </span>
     </div>`;
@@ -4140,15 +4146,18 @@ function showDayDrilldown(dateStr){
     const gl=leapGL(l);
     const k=parseInt(l.contracts)||1;
     const paid=(parseFloat(l.premium)||0)*k*100;
+    const rp=leapRetPct(l);
     return `<div class="week-trade-row" style="padding:8px 0;">
       <span style="display:flex;align-items:center;gap:8px;">
         <span class="ticker">${l.ticker||'?'}</span>
         <span class="badge" style="font-size:9px;background:var(--leap-dim);color:var(--leap);border:1px solid var(--leap);">LEAP</span>
-        <span style="color:var(--text2);font-size:11px;">$${parseFloat(l.strike||0).toFixed(2)} · ${k}K · exp ${fd(l.expiration)}</span>
+        <span style="color:var(--text2);font-size:11px;">$${parseFloat(l.strike||0).toFixed(2)} · ${k}K</span>
         <span class="badge bcl" style="font-size:9px;">CLOSED</span>
+        <span style="color:var(--text3);font-size:10px;">Opened ${fd(l.date)}</span>
       </span>
       <span style="display:flex;align-items:center;gap:14px;">
         <span style="color:var(--text3);font-size:10px;">Paid ${fm(paid)}</span>
+        ${rp!=null?`<span class="chip">${rp.toFixed(2)}%</span>`:''}
         <span class="${gl>=0?'tg':'tr'}" style="font-weight:600;">${fm(gl)}</span>
       </span>
     </div>`;
@@ -4199,12 +4208,16 @@ function showCalTooltip(dateStr, ev){
     const pl=calcPL(t)||0;
     const k=parseInt(t.contracts)||1;
     const stChar=t.assigned==='Yes'?' · A':'';
-    return `<div class="cal-tt-row"><span><span class="tk">${t.ticker}</span> <span style="color:var(--text3);">${t.type==='P'?'P':'C'} $${parseFloat(t.strike||0).toFixed(0)} ${k}K${stChar}</span></span><span class="${pl>=0?'tg':'tr'}">${fm(pl)}</span></div>`;
+    const rp=tradeRetPct(t);
+    const rpStr=rp!=null?` · ${rp.toFixed(2)}%`:'';
+    return `<div class="cal-tt-row"><span><span class="tk">${t.ticker}</span> <span style="color:var(--text3);">${t.type==='P'?'P':'C'} $${parseFloat(t.strike||0).toFixed(0)} ${k}K${stChar} · ${fd(t.openDate)}${rpStr}</span></span><span class="${pl>=0?'tg':'tr'}">${fm(pl)}</span></div>`;
   });
   const leapRows=dayLeaps.map(l=>{
     const gl=leapGL(l);
     const k=parseInt(l.contracts)||1;
-    return `<div class="cal-tt-row"><span><span class="tk">${l.ticker||'?'}</span> <span style="color:var(--leap);">LEAP</span> <span style="color:var(--text3);">$${parseFloat(l.strike||0).toFixed(0)} ${k}K</span></span><span class="${gl>=0?'tg':'tr'}">${fm(gl)}</span></div>`;
+    const rp=leapRetPct(l);
+    const rpStr=rp!=null?` · ${rp.toFixed(2)}%`:'';
+    return `<div class="cal-tt-row"><span><span class="tk">${l.ticker||'?'}</span> <span style="color:var(--leap);">LEAP</span> <span style="color:var(--text3);">$${parseFloat(l.strike||0).toFixed(0)} ${k}K · ${fd(l.date)}${rpStr}</span></span><span class="${gl>=0?'tg':'tr'}">${fm(gl)}</span></div>`;
   });
   const allRows=[...tradeRows,...leapRows];
   const top=allRows.slice(0,5).join('');
