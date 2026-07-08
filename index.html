@@ -8015,11 +8015,11 @@ function _dcfProjBuildTable(){
   // REVENUE
   h+='<tr>'+lbl('REVENUE'); for(t=0;t<=yrs;t++) h+=td(cmp('pjc-y'+t+'-rev')); h+='</tr>';
   // REV GROWTH
-  h+='<tr style="border-bottom:1px solid var(--border);">'+lbl('REV GROWTH %'); h+=td('<span style="color:var(--text3);">—</span>');
+  h+='<tr style="border-bottom:1px solid var(--border);">'+lbl('REV GROWTH %'); h+=td('<span id="pjc-y0-rg" style="color:var(--text3);">—</span>');
   for(t=1;t<=yrs;t++) h+=td(inp('pj-'+s+'-y'+t+'-rg',scDef.rg)); h+='</tr>';
   if(!isPS){
     h+='<tr>'+lbl('NET INCOME'); for(t=0;t<=yrs;t++) h+=td(cmp('pjc-y'+t+'-ni')); h+='</tr>';
-    h+='<tr>'+lbl('NET INC. GROWTH %'); h+=td('<span style="color:var(--text3);">—</span>');
+    h+='<tr>'+lbl('NET INC. GROWTH %'); h+=td('<span id="pjc-y0-ng" style="color:var(--text3);">—</span>');
     for(t=1;t<=yrs;t++) h+=td(inp('pj-'+s+'-y'+t+'-ng',scDef.ng)); h+='</tr>';
     h+='<tr style="border-bottom:1px solid var(--border);">'+lbl('NET INC. MARGIN'); for(t=0;t<=yrs;t++) h+=td(cmp('pjc-y'+t+'-mgn')); h+='</tr>';
     h+='<tr style="border-bottom:1px solid var(--border);">'+lbl('EPS'); for(t=0;t<=yrs;t++) h+=td(cmp('pjc-y'+t+'-eps')); h+='</tr>';
@@ -8059,6 +8059,13 @@ function _dcfRecalcProj(){
     var b=isPS?((isFinite(p.rev0)&&p.shares0>0)?p.rev0/p.shares0:NaN):((isFinite(p.ni0)&&p.shares0>0)?p.ni0/p.shares0:NaN);
     var cur=(isFinite(p.price)&&p.price>0&&isFinite(b)&&b>0)?p.price/b:NaN;
     var el=document.getElementById('pjc-pe0'); if(el) el.textContent=isFinite(cur)?cur.toFixed(1)+'\u00d7':'—';
+  })();
+  // NOW column: trailing actual YoY growth from EDGAR history (facts, not inputs)
+  (function(){
+    var yoy=function(ser){ if(!ser||ser.length<2) return NaN; var a=ser[ser.length-2].val,b=ser[ser.length-1].val; if(!a) return NaN; return (b-a)/Math.abs(a); };
+    var fill=function(id,v){ var el=document.getElementById(id); if(el) el.textContent=isFinite(v)?(v>=0?'+':'')+_dcfPct(v)+' act.':'—'; };
+    fill('pjc-y0-rg',yoy(_dcf.revSeries));
+    if(!isPS) fill('pjc-y0-ng',yoy(_dcf.niSeries));
   })();
   var scMeta=_PJ_SCENS.filter(function(x){return x.k===p.scen;})[0];
   var m=null;
