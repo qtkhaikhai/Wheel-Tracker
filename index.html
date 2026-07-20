@@ -1443,11 +1443,17 @@ async function _pruneOldDriveFiles(folderId){
     const q=encodeURIComponent(`name contains "${prefix}" and "${folderId}" in parents and trashed=false`);
     const list=await _driveReq('GET',`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`);
     if(!list.files||!list.files.length) return;
+    // Never prune the newest file — always keep at least one file per profile
+    // regardless of age. Previously a fallback load of a >3-day-old file was
+    // followed by pruning that deleted that very file (the only Drive copy).
+    list.files.sort((a,b)=>b.name.localeCompare(a.name));
+    const pruneCandidates=list.files.slice(1);
+    if(!pruneCandidates.length) return;
     const cutoff=new Date(); cutoff.setDate(cutoff.getDate()-3);
     // Use LOCAL date to match _todayStr()-based filenames (toISOString is UTC,
     // which in the evening Pacific time made pruning a day more aggressive)
     const cutoffStr=`${cutoff.getFullYear()}-${String(cutoff.getMonth()+1).padStart(2,'0')}-${String(cutoff.getDate()).padStart(2,'0')}`; // YYYY-MM-DD
-    const toDelete=list.files.filter(f=>{
+    const toDelete=pruneCandidates.filter(f=>{
       // extract date portion: wheel-data-<id>-YYYY-MM-DD.json
       const m=f.name.match(/(\d{4}-\d{2}-\d{2})\.json$/);
       return m&&m[1]<cutoffStr;
@@ -1553,6 +1559,14 @@ async function loadFromDrive(userTriggered){
           const savedTs=(parsed&&parsed._meta&&parsed._meta.saved)?parsed._meta.saved:new Date().toISOString();
           localStorage.setItem('wt_lastSync_'+pid,savedTs);
         }catch(e){}
+        if(usedFallback){
+          // Re-anchor: we loaded a previous day's file. Write today's dated
+          // file to Drive BEFORE pruning so the only copy can never be
+          // deleted. Runs even if auto-save is off — this is a data-safety
+          // write, not a convenience autosave.
+          _driveLoadedThisSession=true; // we just loaded; skip stale-overwrite re-check inside _saveToDrive
+          try{ await _saveToDrive(); }catch(e){ console.warn('Re-anchor save after fallback load failed:',e); }
+        }
         // Prune files older than 3 days (runs silently in the background)
         _pruneOldDriveFiles(folderId).catch(()=>{});
       }
