@@ -672,6 +672,12 @@ tbody td{padding:10px 13px;white-space:nowrap;}
     <button class="btn-undo" id="undo-btn" onclick="undo()" disabled title="Undo (Ctrl+Z)">↩ Undo</button>
   </div>
 </header>
+<div id="sync-warning-bar" style="display:none;align-items:center;gap:10px;padding:8px 16px;background:rgba(239,68,68,.12);border-bottom:1px solid var(--red);font-size:12px;font-family:var(--mono);color:var(--red);">
+  <span style="font-size:14px;">&#9888;</span>
+  <span id="sync-warning-text" style="flex:1;"></span>
+  <button class="btn-ghost" style="border-color:var(--red);color:var(--red);" onclick="forceSaveToDrive()">Sign in &amp; save now</button>
+  <button class="btn-ghost" onclick="dismissSyncWarning()" title="Hide until the next change">&#10005;</button>
+</div>
 <div class="toast" id="toast"><span id="toast-msg"></span><button class="toast-undo" onclick="undo()">Undo</button></div>
 <div class="cal-tooltip" id="cal-tooltip"></div>
 
@@ -1259,6 +1265,7 @@ function selectProfile(id){
   sharePrices=JSON.parse(localStorage.getItem('wt_sp_'+p.id)||'{}');
   settings=JSON.parse(localStorage.getItem('wt_settings_'+p.id)||'{}');
   if(!settings.capital) settings.capital=75000;
+  _loadSyncState();
   _renderAll();
   // Now try to sync with Drive (will prompt sign-in if needed)
   _driveReady=false;
@@ -1341,6 +1348,190 @@ let _tokenResolve=null;
 let _driveLoadedThisSession=false; // true once we've successfully checked Drive this session (guards against saving stale data over newer Drive data)
 let _lastSilentRefresh=0;          // cooldown so autosave doesn't spam silent token refreshes
 
+// ═══════════════════════════════════════
+//  SYNC STATE: tombstones, change tracking, record merge
+//  Two computers share one dated Drive file per profile. A plain
+//  whole-file overwrite means last-writer-wins, so edits made on the
+//  other machine vanish. Everything below makes load/save additive:
+//  records merge by id (newest updatedAt wins) and deletions travel as
+//  tombstones instead of just being absent.
+// ═══════════════════════════════════════
+const WT_TOMB_KINDS=['trades','longs','leaps','withdrawals'];
+const WT_TOMB_TTL_DAYS=90;
+let _tombstones={trades:{},longs:{},leaps:{},withdrawals:{}};
+let _unsyncedCount=0;      // local edits not yet confirmed written to Drive
+let _lastSyncOk=null;      // ISO of last successful Drive read or write
+let _lastRemoteMtime=null; // Drive modifiedTime we last read/wrote — detects other-machine writes
+let _syncWarnDismissed=false;
+
+function _pidKey(prefix){ return prefix+(_activeProfile?_activeProfile.id:'default'); }
+
+function _loadSyncState(){
+  _syncWarnDismissed=false;
+  _lastRemoteMtime=null;
+  try{
+    const t=JSON.parse(localStorage.getItem(_pidKey('wt_tombstones_'))||'{}');
+    _tombstones={};
+    WT_TOMB_KINDS.forEach(k=>{ _tombstones[k]=(t&&t[k])||{}; });
+  }catch(e){ _tombstones={trades:{},longs:{},leaps:{},withdrawals:{}}; }
+  try{ _unsyncedCount=parseInt(localStorage.getItem(_pidKey('wt_unsynced_'))||'0',10)||0; }catch(e){ _unsyncedCount=0; }
+  try{ _lastSyncOk=localStorage.getItem(_pidKey('wt_lastSyncOk_'))||null; }catch(e){ _lastSyncOk=null; }
+}
+
+function _saveTombstones(){
+  try{
+    // Prune tombstones older than the TTL so the payload can't grow forever
+    const cutoff=new Date(Date.now()-WT_TOMB_TTL_DAYS*86400000).toISOString();
+    WT_TOMB_KINDS.forEach(k=>{
+      const m=_tombstones[k]||{};
+      Object.keys(m).forEach(id=>{ if(m[id]<cutoff) delete m[id]; });
+    });
+    localStorage.setItem(_pidKey('wt_tombstones_'),JSON.stringify(_tombstones));
+  }catch(e){ console.warn('_saveTombstones failed:',e); }
+}
+
+function _markUnsynced(){
+  _unsyncedCount++;
+  try{ localStorage.setItem(_pidKey('wt_unsynced_'),String(_unsyncedCount)); }catch(e){}
+  _syncWarnDismissed=false;
+  _updateSyncBadge();
+}
+
+function _markSynced(){
+  _unsyncedCount=0;
+  _lastSyncOk=new Date().toISOString();
+  try{
+    localStorage.setItem(_pidKey('wt_unsynced_'),'0');
+    localStorage.setItem(_pidKey('wt_lastSyncOk_'),_lastSyncOk);
+  }catch(e){}
+  _updateSyncBadge();
+}
+
+// Stamp updatedAt on new/changed records and record tombstones for ones that
+// disappeared since the last local write. Runs inside save()/saveLongs()/etc
+// so every mutation site is covered without touching each one individually.
+function _trackLocalChange(kind,arr,storageKey){
+  if(!Array.isArray(arr)) return;
+  let prev={};
+  try{
+    (JSON.parse(localStorage.getItem(storageKey)||'[]')||[]).forEach(r=>{ if(r&&r.id!=null) prev[r.id]=r; });
+  }catch(e){ prev={}; }
+  const now=new Date().toISOString();
+  const seen=new Set();
+  arr.forEach(r=>{
+    if(!r||r.id==null) return;
+    seen.add(String(r.id));
+    const before=prev[r.id];
+    if(!before){ r.updatedAt=now; }
+    else{
+      const a=Object.assign({},before); delete a.updatedAt;
+      const b=Object.assign({},r);      delete b.updatedAt;
+      if(JSON.stringify(a)!==JSON.stringify(b)) r.updatedAt=now;
+      else if(!r.updatedAt&&before.updatedAt) r.updatedAt=before.updatedAt;
+    }
+    // A record that is present again outranks any tombstone (covers undo)
+    const tk=_tombstones[kind]; if(tk&&tk[String(r.id)]) delete tk[String(r.id)];
+  });
+  const prevIds=Object.keys(prev);
+  const missing=prevIds.filter(id=>!seen.has(String(id)));
+  if(missing.length){
+    // Safety valve: an array that went empty (or nearly) is far more likely to
+    // be a state bug than a real bulk delete. Don't broadcast that to Drive.
+    if(arr.length===0&&prevIds.length>5){
+      console.warn('_trackLocalChange: refusing to tombstone '+missing.length+' '+kind+' — array went empty');
+    } else {
+      if(!_tombstones[kind]) _tombstones[kind]={};
+      missing.forEach(id=>{ _tombstones[kind][String(id)]=now; });
+    }
+  }
+  _saveTombstones();
+  try{ localStorage.setItem(_pidKey('wt_lastEdit_'),now); }catch(e){}
+  _markUnsynced();
+}
+
+// Merge two record arrays by id. Newest updatedAt wins; records only one side
+// knows about are kept; tombstones remove a record when the delete is at least
+// as recent as the surviving copy's last edit.
+function _mergeRecords(driveArr,localArr,tombs){
+  const out=new Map();
+  (Array.isArray(driveArr)?driveArr:[]).forEach(r=>{ if(r&&r.id!=null) out.set(String(r.id),r); });
+  (Array.isArray(localArr)?localArr:[]).forEach(r=>{
+    if(!r||r.id==null) return;
+    const key=String(r.id);
+    const d=out.get(key);
+    if(!d){ out.set(key,r); return; }
+    if((r.updatedAt||'')>(d.updatedAt||'')) out.set(key,r);
+  });
+  Object.keys(tombs||{}).forEach(id=>{
+    const rec=out.get(String(id));
+    if(!rec) return;
+    if(!rec.updatedAt||tombs[id]>=rec.updatedAt) out.delete(String(id));
+  });
+  return Array.from(out.values());
+}
+
+// Union of local and incoming tombstones, keeping the later delete time
+function _mergeTombstones(incoming){
+  const merged={};
+  WT_TOMB_KINDS.forEach(k=>{
+    const a=(_tombstones&&_tombstones[k])||{};
+    const b=(incoming&&incoming[k])||{};
+    const m=Object.assign({},a);
+    Object.keys(b).forEach(id=>{ if(!m[id]||b[id]>m[id]) m[id]=b[id]; });
+    merged[k]=m;
+  });
+  return merged;
+}
+
+function _fmtAgo(iso){
+  if(!iso) return 'never';
+  const mins=Math.floor((Date.now()-new Date(iso).getTime())/60000);
+  if(mins<1) return 'just now';
+  if(mins<60) return mins+'m ago';
+  const hrs=Math.floor(mins/60);
+  if(hrs<24) return hrs+'h ago';
+  return Math.floor(hrs/24)+'d ago';
+}
+
+function dismissSyncWarning(){
+  _syncWarnDismissed=true;
+  const bar=document.getElementById('sync-warning-bar');
+  if(bar) bar.style.display='none';
+}
+
+function _updateSyncBadge(){
+  const bar=document.getElementById('sync-warning-bar');
+  const txt=document.getElementById('sync-warning-text');
+  if(!bar||!txt) return;
+  if(!_activeProfile||_syncWarnDismissed){ bar.style.display='none'; return; }
+  const tokenDead=!_accessToken||Date.now()>=_tokenExpiry;
+  const ageMin=_lastSyncOk?((Date.now()-new Date(_lastSyncOk).getTime())/60000):Infinity;
+  let msg='';
+  if(_unsyncedCount>0&&(tokenDead||ageMin>10)){
+    msg=_unsyncedCount+' change'+(_unsyncedCount===1?'':'s')+' on this computer '+(_unsyncedCount===1?'has':'have')+' not reached Google Drive';
+    msg+=_lastSyncOk?(' \u2014 last successful sync '+_fmtAgo(_lastSyncOk)):' \u2014 this profile has never synced from this computer';
+  } else if(tokenDead&&_lastSyncOk&&ageMin>120){
+    msg='Not signed in to Google Drive \u2014 last successful sync '+_fmtAgo(_lastSyncOk)+'. Other computers will not see your changes.';
+  } else if(tokenDead&&!_lastSyncOk){
+    msg='Not signed in to Google Drive \u2014 this profile has never synced from this computer.';
+  }
+  if(msg){ txt.textContent=msg; bar.style.display='flex'; }
+  else bar.style.display='none';
+}
+
+// Keep the "x ago" text and staleness check honest without a page reload
+setInterval(()=>{ try{ _updateSyncBadge(); }catch(e){} },30000);
+
+// Read the Drive file's modifiedTime cheaply (no content download) so we can
+// tell whether another computer has written since we last synced.
+async function _remoteMtime(fileId){
+  if(!fileId) return null;
+  try{
+    const meta=await _driveReq('GET',`https://www.googleapis.com/drive/v3/files/${fileId}?fields=modifiedTime`);
+    return (meta&&meta.modifiedTime)||null;
+  }catch(e){ return null; }
+}
+
 function _setDriveStatus(state,msg){
   const dot=document.getElementById('drive-dot');
   const txt=document.getElementById('drive-status-text');
@@ -1348,7 +1539,10 @@ function _setDriveStatus(state,msg){
   const colors={synced:'var(--green)',saving:'var(--amber)',error:'var(--red)',idle:'var(--text3)'};
   dot.style.background=colors[state]||colors.idle;
   dot.style.animation=state==='saving'?'pulse 1s infinite':'';
-  txt.textContent=msg||'';
+  let label=msg||'';
+  if(state==='synced'&&_lastSyncOk) label+=' \u00b7 '+_fmtAgo(_lastSyncOk);
+  txt.textContent=label;
+  try{ _updateSyncBadge(); }catch(e){}
 }
 
 function _initTokenClient(){
@@ -1476,7 +1670,9 @@ function _buildPayload(){
     _meta:{app:'wheel-tracker',version:2,saved:new Date().toISOString(),tradeCount:trades.length,longsCount:longs.length,leapsCount:leaps.length,profileId:activeProfileId},
     trades,longs,leaps,withdrawals,sharePrices,settings,
     _profileId:activeProfileId,
-    _profiles:_profiles
+    _profiles:_profiles,
+    _tombstones:_tombstones,
+    _lastEditAt:(function(){ try{ return localStorage.getItem(_pidKey('wt_lastEdit_'))||null; }catch(e){ return null; } })()
   },null,2);
 }
 
@@ -1551,6 +1747,8 @@ async function loadFromDrive(userTriggered){
       const parsed=JSON.parse(text);
       const applied=_applyDriveData(parsed);
       if(applied){
+        _markSynced();
+        _remoteMtime(fileId).then(mt=>{ if(mt) _lastRemoteMtime=mt; }).catch(()=>{});
         _setDriveStatus('synced','Synced \u2713');
         // Record what we last synced with, so future saves can detect if another
         // computer has written newer data in the meantime
@@ -1637,40 +1835,40 @@ function _applyDriveData(d){
     return false;
   }
 
-  // ── Guard: Drive has significantly fewer trades than local (>50% drop) ──
-  if(Array.isArray(d.trades)&&localTrades.length>5&&d.trades.length<localTrades.length*0.5){
-    const ok=confirm(
-      `Drive has ${d.trades.length} trade(s) but you have ${localTrades.length} locally.\n\nThis is a large reduction \u2014 load from Drive anyway?\n\nCancel to keep your local data.`
-    );
-    if(!ok){
-      _setDriveStatus('idle','Kept local data');
-      showToast('Kept local data \u2014 Drive load cancelled');
-      return false;
-    }
-  }
+  // (The old ">50% fewer trades" confirm lived here. Loads are now a merge by
+  // id rather than a replace, so a smaller Drive file can no longer drop local
+  // records and the dialog only served to talk the user out of syncing.)
 
   // ── Snapshot current state before overwriting ──
   _backupLocally();
 
+  // ── Merge, don't replace ──────────────────────────────────────────────
+  // Union by id with newest-updatedAt winning, then apply the combined
+  // tombstone set. A load can now only lose a record that was explicitly
+  // deleted; unsynced local entries survive contact with an older Drive file.
+  const localLongs=JSON.parse(localStorage.getItem('wt_longs_'+pid)||'[]');
+  const localLeaps=JSON.parse(localStorage.getItem('wt_leaps_'+pid)||'[]');
+  const localWdr=JSON.parse(localStorage.getItem('wt_withdrawals_'+pid)||'[]');
+  _tombstones=_mergeTombstones(d._tombstones);
+  _saveTombstones();
+
   if(Array.isArray(d.trades)){
-    // Preserve any openDates already stored locally (they may have been patched)
+    const merged=_mergeRecords(d.trades,localTrades,_tombstones.trades);
+    // Preserve any openDates already patched locally when Drive's copy is blank
     const localById={};
     localTrades.forEach(t=>{ if(t.id) localById[t.id]=t; });
-    trades=d.trades.map(dt=>{
-      const local=localById[dt.id];
-      // Only fill in openDate from local when Drive's is missing/empty.
-      // (Previously local always won when the two differed, which silently
-      // reverted openDate edits made on another computer.)
-      const driveHasDate=dt.openDate&&dt.openDate!=='0'&&String(dt.openDate).trim()!=='';
-      if(local&&local.openDate&&!driveHasDate){
-        return {...dt, openDate:local.openDate};
-      }
-      return dt;
+    trades=merged.map(mt=>{
+      const local=localById[mt.id];
+      const hasDate=mt.openDate&&mt.openDate!=='0'&&String(mt.openDate).trim()!=='';
+      if(local&&local.openDate&&!hasDate) return {...mt, openDate:local.openDate};
+      return mt;
     });
+    const gained=trades.length-d.trades.length;
+    if(gained>0) console.log('Drive merge: kept '+gained+' local trade(s) not present in the Drive file');
   }
-  if(Array.isArray(d.longs)) longs=d.longs;
-  if(Array.isArray(d.leaps)) leaps=d.leaps;
-  if(Array.isArray(d.withdrawals)) withdrawals=d.withdrawals;
+  if(Array.isArray(d.longs))       longs=_mergeRecords(d.longs,localLongs,_tombstones.longs);
+  if(Array.isArray(d.leaps))       leaps=_mergeRecords(d.leaps,localLeaps,_tombstones.leaps);
+  if(Array.isArray(d.withdrawals)) withdrawals=_mergeRecords(d.withdrawals,localWdr,_tombstones.withdrawals);
   if(d.sharePrices&&typeof d.sharePrices==='object') sharePrices=d.sharePrices;
   if(d.settings&&typeof d.settings==='object') settings=Object.assign({},settings,d.settings);
   trades.forEach(t=>{
@@ -1682,12 +1880,14 @@ function _applyDriveData(d){
   localStorage.setItem('wt_trades_'+pid,JSON.stringify(trades));
   localStorage.setItem('wt_longs_'+pid,JSON.stringify(longs));
   localStorage.setItem('wt_leaps_'+pid,JSON.stringify(leaps));
+  localStorage.setItem('wt_withdrawals_'+pid,JSON.stringify(withdrawals));
   localStorage.setItem('wt_sp_'+pid,JSON.stringify(sharePrices));
   localStorage.setItem('wt_settings_'+pid,JSON.stringify(settings));
   if(d.settings&&d.settings.theme) applyTheme(d.settings.theme);
   return true;
 }
 
+let _saveInFlight=false;
 async function _saveToDrive(){
   // Always save locally first using profile-scoped keys
   const pid=_activeProfile?_activeProfile.id:'default';
@@ -1733,6 +1933,9 @@ async function _saveToDrive(){
       _driveFileId=null;
     }
   }
+  // The pre-save merge below can trigger _renderAll(), so refuse to re-enter
+  if(_saveInFlight){ console.log('_saveToDrive already running — skipping re-entrant call'); return; }
+  _saveInFlight=true;
   _setDriveStatus('saving','Saving to Drive…');
   try{
     const folderId0=_driveFolderId||await _ensureDriveFolder();
@@ -1775,13 +1978,34 @@ async function _saveToDrive(){
       }catch(e){ console.warn('Stale-overwrite check failed (continuing with save):',e); }
       _driveLoadedThisSession=true; // user chose to overwrite, or nothing newer found
     }
-    const payload=_buildPayload();
     const folderId=folderId0;
     // If we don't have a file id for today, check Drive first to avoid duplicates
     if(!_driveFileId&&folderId){
       const existing=await _findDriveFile(folderId).catch(()=>null);
       if(existing) _driveFileId=existing;
     }
+    // ── Pre-save freshness check (runs on EVERY save) ──────────────
+    // Previously this only ran when the startup load had failed, so the
+    // normal path was last-writer-wins: machine A loads at 9am, machine B
+    // saves at noon, machine A's 2pm autosave overwrote noon's work. One
+    // cheap metadata call tells us whether the file moved under us; if it
+    // did, pull it and merge before writing.
+    if(_driveFileId){
+      try{
+        const mt=await _remoteMtime(_driveFileId);
+        if(mt&&_lastRemoteMtime&&mt!==_lastRemoteMtime){
+          console.log('Drive file changed since our last sync ('+_lastRemoteMtime+' -> '+mt+') — merging before save');
+          const raw=await _driveReq('GET',`https://www.googleapis.com/drive/v3/files/${_driveFileId}?alt=media`);
+          const remote=typeof raw==='string'?JSON.parse(raw):raw;
+          if(_applyDriveData(remote)){
+            _renderAll();
+            showToast('Merged newer changes from another computer', false);
+          }
+        }
+        if(mt) _lastRemoteMtime=mt;
+      }catch(e){ console.warn('Pre-save freshness check failed (continuing):',e); }
+    }
+    const payload=_buildPayload();
     const boundary='wt'+Date.now();
     const meta=JSON.stringify({name:WT_ACTIVE_DRIVE_FILE,...(!_driveFileId&&folderId?{parents:[folderId]}:{})});
     const body='--'+boundary+'\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n'+meta+'\r\n--'+boundary+'\r\nContent-Type: application/json\r\n\r\n'+payload+'\r\n--'+boundary+'--';
@@ -1794,10 +2018,14 @@ async function _saveToDrive(){
     // Record the sync point — matches the _meta.saved timestamp inside the
     // payload closely enough for the stale-overwrite comparison
     try{localStorage.setItem('wt_lastSync_'+pid,new Date().toISOString());}catch(e){}
+    _markSynced();
+    _remoteMtime(_driveFileId).then(mt=>{ if(mt) _lastRemoteMtime=mt; }).catch(()=>{});
     _setDriveStatus('synced','Saved to Drive ✓');
   }catch(e){
     console.error('Drive save:',e);
     _setDriveStatus('error','Save failed — kept locally');
+  }finally{
+    _saveInFlight=false;
   }
 }
 
@@ -1998,7 +2226,7 @@ let longs=(()=>{
     return legacy?JSON.parse(legacy):[];
   }catch(e){return [];}
 })();
-function saveLongs(){ const _lpid=_activeProfile?_activeProfile.id:'default'; localStorage.setItem('wt_longs_'+_lpid,JSON.stringify(longs)); _scheduleDriveSave(); }
+function saveLongs(){ const _lpid=_activeProfile?_activeProfile.id:'default'; _trackLocalChange('longs',longs,'wt_longs_'+_lpid); localStorage.setItem('wt_longs_'+_lpid,JSON.stringify(longs)); _scheduleDriveSave(); }
 function uidLong(){ return 'l'+Date.now()+Math.random(); }
 
 // leaps (manually entered LEAP option positions) are profile-scoped (wt_leaps_<id>)
@@ -2010,7 +2238,7 @@ let leaps=(()=>{
     return [];
   }catch(e){ return []; }
 })();
-function saveLeaps(){ const _lpid=_activeProfile?_activeProfile.id:'default'; localStorage.setItem('wt_leaps_'+_lpid,JSON.stringify(leaps)); _scheduleDriveSave(); }
+function saveLeaps(){ const _lpid=_activeProfile?_activeProfile.id:'default'; _trackLocalChange('leaps',leaps,'wt_leaps_'+_lpid); localStorage.setItem('wt_leaps_'+_lpid,JSON.stringify(leaps)); _scheduleDriveSave(); }
 function uidLeap(){ return 'lp'+Date.now()+Math.random(); }
 // normalize closeDate the same way trades do — '', null, undefined, '0', 'null' all mean "still open"
 function leapCd(l){ const v=l.closeDate; return (v&&v!=='0'&&v!=='null'&&String(v).trim()!=='')?v:null; }
@@ -2034,7 +2262,7 @@ let withdrawals=(()=>{
     return [];
   }catch(e){return [];}
 })();
-function saveWithdrawals(){ const _wpid=_activeProfile?_activeProfile.id:'default'; localStorage.setItem('wt_withdrawals_'+_wpid,JSON.stringify(withdrawals)); _scheduleDriveSave(); }
+function saveWithdrawals(){ const _wpid=_activeProfile?_activeProfile.id:'default'; _trackLocalChange('withdrawals',withdrawals,'wt_withdrawals_'+_wpid); localStorage.setItem('wt_withdrawals_'+_wpid,JSON.stringify(withdrawals)); _scheduleDriveSave(); }
 function uidWithdrawal(){ return 'w'+Date.now()+Math.random(); }
 
 // SHARE PRICES (manual, per ticker)
@@ -2889,7 +3117,7 @@ document.addEventListener('keydown',e=>{
 });
 
 function uid(){ return Date.now()+Math.random(); }
-function save(){ const _spid=_activeProfile?_activeProfile.id:'default'; localStorage.setItem('wt_trades_'+_spid,JSON.stringify(trades)); _scheduleDriveSave(); try { if(document.getElementById('panel-summary')&&document.getElementById('panel-summary').classList.contains('active')) renderSummary(); } catch(e){ console.error('save->renderSummary:',e); } }
+function save(){ const _spid=_activeProfile?_activeProfile.id:'default'; _trackLocalChange('trades',trades,'wt_trades_'+_spid); localStorage.setItem('wt_trades_'+_spid,JSON.stringify(trades)); _scheduleDriveSave(); try { if(document.getElementById('panel-summary')&&document.getElementById('panel-summary').classList.contains('active')) renderSummary(); } catch(e){ console.error('save->renderSummary:',e); } }
 
 function newTrade(){
   return {id:uid(),ticker:'',set:1,openDate:today(),expDate:'',type:'P',contracts:1,strike:'',premium:'',openFees:0.65,closeDate:'',costToClose:0,closeFees:0,assigned:'No',notes:''};
