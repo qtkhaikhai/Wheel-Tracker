@@ -437,6 +437,26 @@ tbody td{padding:10px 13px;white-space:nowrap;}
 .sum-panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;}
 .sum-panel-hdr{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;}
 .sum-panel-title{font-family:var(--sans);font-size:12px;font-weight:600;color:var(--text2);letter-spacing:.06em;text-transform:uppercase;}
+.ww-body{padding:6px 18px 12px;}
+.ww-sec{padding:10px 0;border-bottom:1px solid var(--border);}
+.ww-sec:last-child{border-bottom:none;}
+.ww-sec-t{font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--text2);margin-bottom:6px;font-weight:600;}
+.ww-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:5px 0;font-size:12px;flex-wrap:wrap;}
+.ww-main{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0;}
+.ww-act{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.ww-tk{cursor:pointer;}
+.ww-tk:hover{text-decoration:underline;}
+.ww-ct{font-family:var(--mono);color:var(--text);}
+.ww-dim{color:var(--text2);font-family:var(--mono);font-size:11px;}
+.ww-day{display:inline-block;min-width:62px;font-family:var(--mono);font-size:11px;color:var(--text2);}
+.ww-pill{font-family:var(--mono);font-size:10px;padding:2px 6px;border-radius:4px;border:1px solid currentColor;}
+.ww-note{font-size:10px;font-style:italic;}
+.ww-amt{font-family:var(--mono);min-width:64px;text-align:right;}
+.ww-btn{background:var(--surface2);border:1px solid var(--border2);color:var(--text);font-family:var(--mono);font-size:11px;padding:3px 9px;border-radius:5px;cursor:pointer;}
+.ww-btn:hover{border-color:var(--text2);}
+.ww-btn:disabled{opacity:.5;cursor:default;}
+.ww-status{font-size:10px;color:var(--text3);font-family:var(--mono);}
+.ww-empty{padding:18px 0;text-align:center;color:var(--text2);font-size:12px;}
 .sum-panel-body{padding:6px 0;overflow-y:auto;flex:1;}
 .sum-exp-row{display:flex;align-items:center;gap:10px;padding:9px 18px;border-bottom:1px solid var(--border);font-size:12px;}
 .sum-exp-row:last-child{border-bottom:none;}
@@ -806,6 +826,16 @@ tbody td{padding:10px 13px;white-space:nowrap;}
             <input type="text" id="setting-tradier-proxy" placeholder="https://…workers.dev" oninput="saveTradierProxy(this.value)" style="width:100%;"/>
             <button class="settings-btn" onclick="testTradierProxy()">Test connection</button>
             <div id="tradier-test-status" class="td" style="font-size:11px;"></div>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div class="settings-label">
+            <div class="settings-label-title">This Week thresholds</div>
+            <div class="settings-label-sub">Dashboard "This Week" panel: flag take-profit at this % of max profit captured, and assignment risk when the stock is ITM or within this % of the strike.</div>
+          </div>
+          <div class="settings-control" style="display:flex;gap:14px;align-items:center;">
+            <label style="font-size:11px;color:var(--text2);">Profit % <input type="number" id="setting-ww-profit" min="1" max="100" step="5" style="width:70px;" oninput="saveSetting('wwProfitPct',this.value)"/></label>
+            <label style="font-size:11px;color:var(--text2);">Risk % <input type="number" id="setting-ww-risk" min="0" max="50" step="0.5" style="width:70px;" oninput="saveSetting('wwRiskPct',this.value)"/></label>
           </div>
         </div>
       </div>
@@ -2151,6 +2181,10 @@ function renderSettings(){
   if(elAS) elAS.checked=_autoSaveEnabled;
   const elTP=document.getElementById('setting-tradier-proxy');
   if(elTP) elTP.value=_tradierProxy();
+  const elWP=document.getElementById('setting-ww-profit');
+  if(elWP&&document.activeElement!==elWP) elWP.value=_wwProfitPct();
+  const elWR=document.getElementById('setting-ww-risk');
+  if(elWR&&document.activeElement!==elWR) elWR.value=_wwRiskPct();
   renderThemeSwitcher();
   // Update snapshot button label with timestamp if one exists
   const btn=document.getElementById('btn-restore-snapshot');
@@ -2474,6 +2508,183 @@ function getStockBreakdown(){
     }
   });
   return Object.values(map).filter(m=>m.closedCount>0||m.opens>0).sort((a,b)=>b.realized-a.realized);
+}
+
+// ═══════════════════════════════════════
+//  THIS WEEK — action queue on the Dashboard
+// ═══════════════════════════════════════
+var _ww={stk:{},opt:{},fetchedAt:0,loading:false,err:'',allPast:false};
+var WW_REFRESH_MS=5*60*1000;
+function _wwProfitPct(){ var v=parseFloat(settings.wwProfitPct); return (v>0&&v<=100)?v:50; }
+function _wwRiskPct(){ var v=parseFloat(settings.wwRiskPct); return (v>=0&&v<=50)?v:3; }
+// Calendar days from local today to an ISO date (0 = today, negative = past)
+function _wwDays(iso){
+  if(!iso) return null;
+  var p=String(iso).slice(0,10).split('-'); if(p.length<3) return null;
+  var e=new Date(+p[0],+p[1]-1,+p[2]); var n=new Date(); var t=new Date(n.getFullYear(),n.getMonth(),n.getDate());
+  return Math.round((e-t)/86400e3);
+}
+// OCC option symbol, e.g. SOFI 2026-05-29 15.5 P → SOFI260529P00015500
+function _wwOcc(t){
+  var tk=String(t.ticker||'').toUpperCase().trim(), ex=String(t.expDate||'').slice(0,10), k=parseFloat(t.strike);
+  if(!tk||!/^\d{4}-\d{2}-\d{2}$/.test(ex)||!(k>0)||(t.type!=='P'&&t.type!=='C')) return null;
+  var s=String(Math.round(k*1000)); while(s.length<8) s='0'+s;
+  return tk+ex.slice(2,4)+ex.slice(5,7)+ex.slice(8,10)+t.type+s;
+}
+function _wwPrice(tk){ tk=String(tk||'').toUpperCase(); var v=_ww.stk[tk]; if(v!=null) return v; v=parseFloat(sharePrices[tk]); return v>0?v:null; }
+function _wwMid(t){
+  var o=_ww.opt[_wwOcc(t)]; if(!o) return null;
+  if(o.bid!=null&&o.ask!=null&&o.ask>0&&o.bid>=0) return (o.bid+o.ask)/2;
+  return o.last!=null?o.last:null;
+}
+// cushion % — positive = OTM distance from strike, negative = ITM
+function _wwCushion(t,px){
+  var k=parseFloat(t.strike); if(!(k>0)||px==null) return null;
+  return t.type==='P'?(px-k)/k*100:(k-px)/k*100;
+}
+function _wwBuckets(){
+  var open=trades.filter(function(t){ return !cd(t)&&t.ticker&&(t.type==='P'||t.type==='C'); });
+  var riskPct=_wwRiskPct(), profPct=_wwProfitPct();
+  var past=[],week=[],risk=[],profit=[];
+  open.forEach(function(t){
+    var d=_wwDays(t.expDate); if(d==null) return;
+    var px=_wwPrice(t.ticker), cu=_wwCushion(t,px);
+    var k=parseInt(t.contracts)||1, prem=parseFloat(t.premium)||0;
+    var row={t:t,days:d,px:px,cushion:cu,itm:cu!=null&&cu<0,prem$:prem*k*100};
+    if(d<0){ past.push(row); return; }
+    if(d<=7) week.push(row);
+    if(cu!=null&&cu<=riskPct) risk.push(row);
+    var mid=_wwMid(t);
+    if(mid!=null&&prem>0){
+      var cap=(prem-mid)/prem*100;
+      if(cap>=profPct){
+        row.mid=mid; row.captured=cap; row.buyBack=mid*k*100;
+        row.lockIn=prem*k*100-mid*k*100-(parseFloat(t.openFees)||0);
+        profit.push(row);
+      }
+    }
+  });
+  past.sort(function(a,b){ return a.days-b.days; });
+  week.sort(function(a,b){ return a.days-b.days||String(a.t.ticker).localeCompare(b.t.ticker); });
+  risk.sort(function(a,b){ return a.cushion-b.cushion; });
+  profit.sort(function(a,b){ return b.captured-a.captured; });
+  return {open:open,past:past,week:week,risk:risk,profit:profit};
+}
+function _wwContract(t){
+  return '<span class="ticker ww-tk" onclick="showWheelDetails(\''+String(t.ticker).replace(/'/g,'')+'\')">'+t.ticker+'</span> '+
+    '<span class="ww-ct">$'+(parseFloat(t.strike)||0)+' '+(t.type==='P'?'Put':'Call')+' · '+(parseInt(t.contracts)||1)+'K · '+fd(t.expDate)+'</span>';
+}
+function _wwMoney(r){
+  if(r.px==null) return '<span class="ww-dim">no price</span>';
+  var cls=r.itm?'tr':(r.cushion<=_wwRiskPct()?'ta':'tg');
+  return '<span class="ww-dim">$'+r.px.toFixed(2)+'</span> <span class="ww-pill '+cls+'">'+(r.itm?'ITM ':'OTM ')+Math.abs(r.cushion).toFixed(1)+'%</span>';
+}
+function _wwDayLbl(d){ return d===0?'Today':d===1?'Tomorrow':d+'d'; }
+function _wwPanelHTML(){
+  var b=_wwBuckets();
+  if(!b.open.length) return '';
+  var hasProxy=!!_tradierProxy();
+  var sec=[];
+  if(b.past.length){
+    sec.push('<div class="ww-sec"><div class="ww-sec-t tr">Past expiration · still open ('+b.past.length+')</div>'+
+      (_ww.allPast?b.past:b.past.slice(0,8)).map(function(r){ var id=String(r.t.id);
+        return '<div class="ww-row"><div class="ww-main">'+_wwContract(r.t)+'<span class="ww-dim"> · expired '+Math.abs(r.days)+'d ago</span></div>'+
+          '<div class="ww-act"><button class="ww-btn" onclick="wwMark(\''+id+'\',\'expired\')">Expired</button>'+
+          '<button class="ww-btn" onclick="wwMark(\''+id+'\',\'assigned\')">Assigned</button></div></div>';
+      }).join('')+(b.past.length>8?'<div style="padding-top:6px;"><button class="ww-btn" onclick="_ww.allPast=!_ww.allPast;_wwRerender();">'+(_ww.allPast?'Show fewer':'Show all '+b.past.length)+'</button></div>':'')+'</div>');
+  }
+  if(b.week.length){
+    sec.push('<div class="ww-sec"><div class="ww-sec-t">Expiring in the next 7 days ('+b.week.length+')</div>'+
+      b.week.map(function(r){
+        var note='';
+        if(r.itm&&r.days<=7) note=r.t.type==='C'?' <span class="ww-note ta">shares likely called away</span>':' <span class="ww-note ta">likely assigned</span>';
+        return '<div class="ww-row"><div class="ww-main"><span class="ww-day">'+_wwDayLbl(r.days)+'</span>'+_wwContract(r.t)+note+'</div>'+
+          '<div class="ww-act">'+_wwMoney(r)+'<span class="ww-amt tg">'+fm(r.prem$)+'</span></div></div>';
+      }).join('')+'</div>');
+  }
+  if(b.risk.length){
+    sec.push('<div class="ww-sec"><div class="ww-sec-t ta">Assignment risk · ITM or within '+_wwRiskPct()+'% ('+b.risk.length+')</div>'+
+      b.risk.map(function(r){
+        return '<div class="ww-row"><div class="ww-main">'+_wwContract(r.t)+'<span class="ww-dim"> · '+_wwDayLbl(r.days)+' left</span></div>'+
+          '<div class="ww-act">'+_wwMoney(r)+'</div></div>';
+      }).join('')+'</div>');
+  }
+  if(b.profit.length){
+    sec.push('<div class="ww-sec"><div class="ww-sec-t tg">Take-profit candidates · ≥'+_wwProfitPct()+'% captured ('+b.profit.length+')</div>'+
+      b.profit.map(function(r){
+        return '<div class="ww-row"><div class="ww-main">'+_wwContract(r.t)+'<span class="ww-dim"> · '+_wwDayLbl(r.days)+' left</span></div>'+
+          '<div class="ww-act"><span class="ww-pill tg">'+r.captured.toFixed(0)+'%</span>'+
+          '<span class="ww-dim">buy back '+fm(r.buyBack)+'</span><span class="ww-amt tg">+'+fm(r.lockIn)+'</span></div></div>';
+      }).join('')+'</div>');
+  }
+  var status;
+  if(!hasProxy) status='Prices unavailable — set Tradier proxy in Settings';
+  else if(_ww.loading) status='Fetching prices…';
+  else if(_ww.err) status='Prices unavailable ('+_ww.err+')';
+  else if(_ww.fetchedAt) status='Prices as of '+new Date(_ww.fetchedAt).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'});
+  else status='';
+  var body=sec.length?sec.join(''):'<div class="ww-empty">✓ Nothing needs attention this week</div>';
+  return '<div class="sum-panel ww-panel" id="ww-panel" style="margin-bottom:18px;">'+
+    '<div class="sum-panel-hdr"><span class="sum-panel-title">This Week</span>'+
+    '<div style="display:flex;align-items:center;gap:10px;"><span class="ww-status">'+status+'</span>'+
+    (hasProxy?'<button class="ww-btn" onclick="_wwFetch(true)"'+(_ww.loading?' disabled':'')+'>⟳</button>':'')+
+    '</div></div><div class="ww-body">'+body+'</div></div>';
+}
+function _wwRerender(){
+  var el=document.getElementById('ww-panel'); if(!el) return;
+  var h=_wwPanelHTML();
+  if(!h){ el.remove(); return; }
+  var tmp=document.createElement('div'); tmp.innerHTML=h; el.replaceWith(tmp.firstChild);
+}
+async function _wwFetch(force){
+  if(_ww.loading) return;
+  if(!_tradierProxy()) return;
+  if(!force&&_ww.fetchedAt&&Date.now()-_ww.fetchedAt<WW_REFRESH_MS) return;
+  var open=trades.filter(function(t){ return !cd(t)&&t.ticker; });
+  if(!open.length) return;
+  var syms=[];
+  open.forEach(function(t){
+    var tk=String(t.ticker).toUpperCase().trim(); if(tk&&syms.indexOf(tk)<0) syms.push(tk);
+    var d=_wwDays(t.expDate), o=_wwOcc(t); if(o&&d!=null&&d>=0&&syms.indexOf(o)<0) syms.push(o);
+  });
+  _ww.loading=true; _ww.err=''; _wwRerender();
+  try{
+    var stk={},opt={};
+    for(var i=0;i<syms.length;i+=100){
+      var chunk=syms.slice(i,i+100);
+      var data=await _tradierGet('/v1/markets/quotes?symbols='+encodeURIComponent(chunk.join(',')));
+      _asArray(data&&data.quotes&&data.quotes.quote).forEach(function(q){
+        var sym=String(q.symbol||'').toUpperCase(); if(!sym) return;
+        var n=function(v){ return (v==null||v===''||isNaN(v))?null:Number(v); };
+        if(q.type==='option'||/\d{6}[PC]\d{8}$/.test(sym)){
+          opt[sym]={bid:n(q.bid),ask:n(q.ask),last:n(q.last)};
+        } else {
+          var px=n(q.last); if(px==null) px=n(q.prevclose);
+          if(px!=null&&px>0) stk[sym]=px;
+        }
+      });
+    }
+    _ww.stk=stk; _ww.opt=opt; _ww.fetchedAt=Date.now();
+  }catch(e){
+    _ww.err=(e&&e.message==='no-proxy')?'no proxy':'could not reach Tradier';
+  }
+  _ww.loading=false;
+  _wwRerender();
+}
+function wwMark(id,kind){
+  var t=trades.find(function(x){ return String(x.id)===String(id); });
+  if(!t||cd(t)) return;
+  var lbl=t.ticker+' $'+t.strike+' '+(t.type==='P'?'put':'call')+' exp '+fd(t.expDate);
+  if(!confirm('Mark '+lbl+' as '+(kind==='assigned'?'ASSIGNED':'EXPIRED worthless')+'?')) return;
+  pushUndo((kind==='assigned'?'mark assigned ':'mark expired ')+t.ticker);
+  t.closeDate=String(t.expDate).slice(0,10);
+  t.costToClose=0; t.closeFees=0;
+  t.assigned=kind==='assigned'?'Yes':'No';
+  save();
+  try{ renderLog(); }catch(e){}
+  renderDerived();
+  try{ renderSummary(); }catch(e){}
+  showToast(lbl+' marked '+(kind==='assigned'?'assigned':'expired'));
 }
 
 function renderSummary(){
@@ -3067,7 +3278,8 @@ function _renderSummaryInner(container){
       <div class="tbl-wrap" style="margin:0;border:none;border-radius:0;background:transparent;"><div class="mlist" id="summary-monthly"></div></div>
     </div>`;
 
-  container.innerHTML=hero+kpis+`<div class="sum-two-col">${expansion}${calendar}</div>`+monthlyPanel+feed;
+  container.innerHTML=_wwPanelHTML()+hero+kpis+`<div class="sum-two-col">${expansion}${calendar}</div>`+monthlyPanel+feed;
+  try{ _wwFetch(false); }catch(e){}
   // populate the monthly P&L list using the existing renderer
   try { renderMonthly('summary-monthly'); } catch(e){ console.error('summary monthly:',e); }
 }
