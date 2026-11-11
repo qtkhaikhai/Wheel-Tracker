@@ -617,6 +617,24 @@ tbody td{padding:10px 13px;white-space:nowrap;}
   .rpt-pdf-footer { background:#f5f0ea; border-top:1px solid #dddad4; padding:9px 24px; display:flex; justify-content:space-between; align-items:center; font-size:9px; color:#a89880; font-family:Arial,sans-serif; }
   .rpt-empty { padding:48px; text-align:center; color:var(--text3); font-size:13px; }
   
+
+/* ── Compare Tickers leaderboard ── */
+.wlb{margin-top:24px;}
+.wlb-hdr{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;}
+.wlb-scope{display:flex;gap:4px;}
+.wlb-scope button{background:var(--surface2);border:1px solid var(--border);color:var(--text3);font-size:11px;padding:4px 10px;border-radius:6px;cursor:pointer;}
+.wlb-scope button.active{color:var(--green);border-color:var(--green);}
+.wlb-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:10px;max-height:520px;overflow-y:auto;}
+.wlb-table{width:100%;border-collapse:collapse;min-width:1050px;}
+.wlb-table th{position:sticky;top:0;z-index:1;padding:9px 11px;text-align:left;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--text3);font-weight:400;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap;cursor:pointer;user-select:none;}
+.wlb-table th:hover,.wlb-table th.on{color:var(--green);}
+.wlb-arr{opacity:.3;}.wlb-arr.on{opacity:1;color:var(--green);}
+.wlb-table td{padding:8px 11px;font-size:12px;border-bottom:1px solid var(--border);white-space:nowrap;}
+.wlb-table tbody tr{cursor:pointer;}
+.wlb-table tbody tr:hover td{background:var(--surface2);}
+.wlb-table tfoot td{position:sticky;bottom:0;background:var(--surface2);font-weight:600;border-top:1px solid var(--border);border-bottom:none;}
+.wlb-dot{color:var(--amber);font-size:8px;margin-left:6px;vertical-align:middle;}
+.wlb-note{font-size:10px;color:var(--text3);margin-top:6px;}
 </style>
 <script id="data-loader">
 (function(){
@@ -771,10 +789,7 @@ tbody td{padding:10px 13px;white-space:nowrap;}
   <div class="panel" id="panel-pnl">
     <div class="stat-grid" style="grid-template-columns:repeat(6,1fr);margin-bottom:20px;" id="pnl-stat-grid"></div>
     <div id="pnl-chart-container"></div>
-    <div class="g2">
-      <div><div class="sec-hdr"><span class="sec-title">Monthly P&amp;L</span></div><div class="tbl-wrap" style="max-height:400px;overflow-y:auto;"><div class="mlist" id="pnl-monthly"></div></div></div>
-      <div><div class="sec-hdr"><span class="sec-title">By Ticker</span></div><div class="tbl-wrap" id="ticker-table-wrap" style="max-height:400px;overflow-y:auto;"></div></div>
-    </div>
+    <div><div class="sec-hdr"><span class="sec-title">Monthly P&amp;L</span></div><div class="tbl-wrap" style="max-height:400px;overflow-y:auto;"><div class="mlist" id="pnl-monthly"></div></div></div>
     <div class="sec-hdr"><span class="sec-title">Trade Stats</span></div>
     <div class="stat-grid" style="grid-template-columns:repeat(4,1fr);" id="trade-stat-grid"></div>
     <div id="pnl-stock-breakdown" style="margin-top:20px;"></div>
@@ -3358,6 +3373,66 @@ function calcARActual(t){
 }
 // normalize closeDate — treat '', null, undefined, '0', 'null' all as no close
 function cd(t){ const v=t.closeDate; return (v&&v!=='0'&&v!=='null'&&String(v).trim()!=='')?v:null; }
+
+// ── Wheel ledger: one source of truth for per-ticker wheel math ──────────────
+// Matches the Dashboard/Summary definition exactly:
+//   • shares acquired at PUT STRIKE (premium is NOT netted into basis — it is counted once, as option P&L)
+//   • covered-call assignment realizes (call strike − average cost) × shares called away
+//   • events processed in close-date order, average-cost pool per ticker
+// Manual longs (stock bought outside the wheel) join the pool at their purchase price so calls
+// written against them still realize a gain; the Dashboard does not include longs.
+function _wheelLedger(ticker, setFilter){
+  const inSet=x=>setFilter==null||(parseInt(x.set)||1)===setFilter;
+  const ts=trades.filter(t=>t.ticker===ticker&&inSet(t));
+  const lg=(typeof longs!=='undefined'?longs:[]).filter(l=>l.ticker===ticker&&l.shares&&l.price&&!l.calledAway&&inSet(l));
+  const ev=[];
+  ts.filter(t=>t.assigned==='Yes'&&cd(t)).forEach(t=>ev.push({date:cd(t),kind:t.type==='P'?'buy':'call',sh:(parseInt(t.contracts)||1)*100,px:parseFloat(t.strike)||0}));
+  lg.forEach(l=>ev.push({date:l.date||'',kind:'buy',sh:parseFloat(l.shares)||0,px:parseFloat(l.price)||0}));
+  ev.sort((a,b)=>new Date(a.date||0)-new Date(b.date||0)); // stable: same-day ties keep trade order, like the Dashboard
+  const pool={shares:0,cost:0}; let shareGain=0, calledAwayShares=0;
+  ev.forEach(e=>{
+    if(e.kind==='buy'){ pool.shares+=e.sh; pool.cost+=e.px*e.sh; }
+    else if(pool.shares>0){
+      const sold=Math.min(e.sh,pool.shares), avg=pool.cost/pool.shares;
+      shareGain+=(e.px-avg)*sold; calledAwayShares+=sold;
+      pool.cost-=avg*sold; pool.shares-=sold;
+      if(pool.shares<=0){ pool.shares=0; pool.cost=0; }
+    }
+  });
+  const closed=ts.filter(t=>cd(t)), open=ts.filter(t=>!cd(t));
+  const netOpen=t=>(parseFloat(t.premium)||0)*(parseInt(t.contracts)||1)*100-(parseFloat(t.openFees)||0);
+  const realizedPut=closed.filter(t=>t.type==='P').reduce((s,t)=>s+(calcPL(t)||0),0);
+  const realizedCall=closed.filter(t=>t.type==='C').reduce((s,t)=>s+(calcPL(t)||0),0);
+  const openPut=open.filter(t=>t.type==='P').reduce((s,t)=>s+netOpen(t),0);
+  const openCall=open.filter(t=>t.type==='C').reduce((s,t)=>s+netOpen(t),0);
+  const optionPL=realizedPut+realizedCall;
+  return {ticker, trades:ts, closed, open, realizedPut, realizedCall, optionPL, openPut, openCall,
+    openPrem:openPut+openCall, shareGain, calledAwayShares,
+    sharesHeld:pool.shares, sharesCost:pool.cost, avgCost:pool.shares>0?pool.cost/pool.shares:0,
+    realized:optionPL+shareGain, total:optionPL+openPut+openCall+shareGain};
+}
+// Leaderboard row for one ticker (all sets)
+function _tickerScore(ticker){
+  const L=_wheelLedger(ticker,null);
+  const wins=L.closed.filter(t=>(calcPL(t)||0)>0).length;
+  let capDays=0, daysSum=0;
+  L.closed.forEach(t=>{
+    const d=ddays(t.openDate,cd(t));
+    capDays+=(parseFloat(t.strike)||0)*(parseInt(t.contracts)||1)*100*d;
+    daysSum+=d;
+  });
+  const gross=L.trades.reduce((s,t)=>s+(parseFloat(t.premium)||0)*(parseInt(t.contracts)||1)*100,0);
+  const openPutCollat=L.open.filter(t=>t.type==='P').reduce((s,t)=>s+(parseFloat(t.strike)||0)*(parseInt(t.contracts)||1)*100,0);
+  return {ticker, trades:L.trades.length, closed:L.closed.length,
+    wr:L.closed.length?wins/L.closed.length*100:null,
+    optionPL:L.optionPL, shareGain:L.shareGain, realized:L.realized, openPrem:L.openPrem, total:L.total,
+    roc:capDays>0?L.realized/capDays*365*100:null,
+    avgPrem:L.trades.length?gross/L.trades.length:null,
+    avgDays:L.closed.length?daysSum/L.closed.length:null,
+    assigned:L.trades.filter(t=>t.type==='P'&&t.assigned==='Yes').length,
+    called:L.trades.filter(t=>t.type==='C'&&t.assigned==='Yes').length,
+    openCap:openPutCollat+L.sharesCost, isOpen:L.open.length>0||L.sharesHeld>0};
+}
 function ddays(d1,d2){ return d1&&d2?Math.max(1,Math.round((new Date(d2)-new Date(d1))/86400e3)):0; }
 function dte(e){ return e?Math.round((new Date(e)-new Date())/86400e3):null; }
 function status(t){ return !cd(t)?'Open':t.assigned==='Yes'?'Assigned':'Closed'; }
@@ -4072,6 +4147,80 @@ document.getElementById('modal-weekly').addEventListener('click',e=>{ if(e.targe
 // ═══════════════════════════════════════
 //  POSITIONS
 // ═══════════════════════════════════════
+// ── Compare Tickers leaderboard (Wheels tab) ─────────────────────────────────
+let wheelLbSort={col:'total',dir:-1}; // dir -1 = high→low
+let wheelLbScope='all';               // all | open | closed
+function sortWheelLb(col){
+  if(wheelLbSort.col===col) wheelLbSort.dir=-wheelLbSort.dir;
+  else wheelLbSort={col, dir:col==='ticker'?1:-1};
+  renderWheels();
+}
+function setWheelLbScope(s){ wheelLbScope=s; renderWheels(); }
+function _renderTickerLeaderboard(){
+  const tickers=[...new Set([
+    ...trades.filter(t=>t.ticker).map(t=>t.ticker),
+    ...longs.filter(l=>l.ticker&&l.shares&&l.price).map(l=>l.ticker)
+  ])];
+  if(!tickers.length) return '';
+  let rows=tickers.map(_tickerScore);
+  if(wheelLbScope==='open') rows=rows.filter(r=>r.isOpen);
+  else if(wheelLbScope==='closed') rows=rows.filter(r=>!r.isOpen);
+  const {col,dir}=wheelLbSort;
+  rows.sort((a,b)=>{
+    if(col==='ticker') return dir*a.ticker.localeCompare(b.ticker);
+    const av=a[col], bv=b[col];
+    if(av==null&&bv==null) return a.ticker.localeCompare(b.ticker);
+    if(av==null) return 1; if(bv==null) return -1;   // blanks always last
+    return dir*(av-bv)||a.ticker.localeCompare(b.ticker);
+  });
+  const cols=[
+    ['ticker','Ticker','',''],
+    ['total','Total P&L','Realized option P&L + realized share gain + open premium — same figure as Wheel Details'],
+    ['realized','Realized','Closed option P&L + share gain on called-away shares'],
+    ['shareGain','Share Gain','(call strike − put-strike cost) × shares called away'],
+    ['openPrem','Open Prem','Premium on positions still open, net of open fees'],
+    ['wr','Win %','Closed trades with positive P&L'],
+    ['roc','Ann. ROC','Realized ÷ (strike × 100 × contracts × days held, summed over closed trades) × 365'],
+    ['avgPrem','Avg Prem','Average gross premium per trade'],
+    ['avgDays','Avg Days','Average days from open to close'],
+    ['assigned','Assigned','Puts assigned'],
+    ['called','Called','Calls assigned (shares called away)'],
+    ['openCap','Open Capital','Open put collateral + cost of shares still held'],
+    ['trades','Trades','']
+  ];
+  const arrow=c=>col!==c?'<span class="wlb-arr">↕</span>':`<span class="wlb-arr on">${dir===-1?'↓':'↑'}</span>`;
+  const head=cols.map(([k,l,tip])=>`<th class="${col===k?'on':''}" onclick="sortWheelLb('${k}')"${tip?` title="${tip}"`:''}>${l} ${arrow(k)}</th>`).join('');
+  const money=v=>`<td class="${v>0?'tg':v<0?'tr':'td'}">${v?fm(v):'—'}</td>`;
+  const body=rows.map(r=>`<tr onclick="showWheelDetails('${r.ticker}')" title="Open ${r.ticker} wheel details">
+      <td><span class="ticker">${r.ticker}</span>${r.isOpen?'<span class="wlb-dot" title="Has open positions or shares">●</span>':''}</td>
+      ${money(r.total)}${money(r.realized)}${money(r.shareGain)}
+      <td class="${r.openPrem>0?'ta':'td'}">${r.openPrem?fm(r.openPrem):'—'}</td>
+      <td>${r.wr!=null?Math.round(r.wr)+'%':'—'}</td>
+      <td class="${r.roc==null?'td':r.roc>=0?'tg':'tr'}">${r.roc!=null?fp(r.roc):'—'}</td>
+      <td>${r.avgPrem!=null?fm(r.avgPrem):'—'}</td>
+      <td>${r.avgDays!=null?Math.round(r.avgDays)+'d':'—'}</td>
+      <td>${r.assigned||'—'}</td>
+      <td>${r.called||'—'}</td>
+      <td>${r.openCap?fm(r.openCap):'—'}</td>
+      <td class="td">${r.trades}</td>
+    </tr>`).join('')||`<tr><td colspan="${cols.length}" class="td" style="padding:16px;text-align:center;">No tickers in this view</td></tr>`;
+  const tot=rows.reduce((a,r)=>{a.total+=r.total;a.realized+=r.realized;a.shareGain+=r.shareGain;a.openPrem+=r.openPrem;a.openCap+=r.openCap;a.trades+=r.trades;a.assigned+=r.assigned;a.called+=r.called;return a;},{total:0,realized:0,shareGain:0,openPrem:0,openCap:0,trades:0,assigned:0,called:0});
+  const foot=rows.length>1?`<tfoot><tr>
+      <td>${rows.length} tickers</td>${money(tot.total)}${money(tot.realized)}${money(tot.shareGain)}
+      <td class="ta">${tot.openPrem?fm(tot.openPrem):'—'}</td><td></td><td></td><td></td><td></td>
+      <td>${tot.assigned}</td><td>${tot.called}</td><td>${tot.openCap?fm(tot.openCap):'—'}</td><td class="td">${tot.trades}</td>
+    </tr></tfoot>`:'';
+  const scopeBtn=(s,l)=>`<button class="${wheelLbScope===s?'active':''}" onclick="setWheelLbScope('${s}')">${l}</button>`;
+  return `<div class="wlb">
+    <div class="wlb-hdr">
+      <span class="sec-title">Compare Tickers</span>
+      <div class="wlb-scope">${scopeBtn('all','All')}${scopeBtn('open','Active')}${scopeBtn('closed','Inactive')}</div>
+    </div>
+    <div class="wlb-wrap"><table class="wlb-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody>${foot}</table></div>
+    <div class="wlb-note">Click a column to sort · click a row for Wheel Details · hover headers for definitions</div>
+  </div>`;
+}
+
 function renderWheels(){
   const container=document.getElementById('pos-content');
   const open=trades.filter(t=>!cd(t)&&t.ticker);
@@ -4090,7 +4239,7 @@ function renderWheels(){
   </div>`:'';
 
   if(!open.length){
-    container.innerHTML=pickerHtml+`<div class="empty-state"><div class="empty-title">No open positions</div><div>All trades are closed</div></div>`;
+    container.innerHTML=pickerHtml+`<div class="empty-state"><div class="empty-title">No open positions</div><div>All trades are closed</div></div>`+_renderTickerLeaderboard();
     return;
   }
 
@@ -4215,7 +4364,7 @@ function renderWheels(){
     </div>`;
   }).join('');
 
-  container.innerHTML=pickerHtml+topStats+`<div style="margin-bottom:20px;">${donutChart}</div><div class="pos-cards-grid">${cards}</div>`;
+  container.innerHTML=pickerHtml+topStats+`<div style="margin-bottom:20px;">${donutChart}</div><div class="pos-cards-grid">${cards}</div>`+_renderTickerLeaderboard();
 }
 
 // =====================================
@@ -4298,37 +4447,10 @@ function showWheelDetails(ticker, isUpdate, filterSet){
       var isOpen=setTrades.some(function(t){return !cd(t);});
       var openDot=isOpen?'&#9679; ':'';
       var activeCls=activeSetFilter===s?' active':'';
-      // Per-set share appreciation
-      var _setLots=[];
-      var _setCalledAwayAppreciation=0;
-      setTrades.filter(function(t){return t.type==='P'&&t.assigned==='Yes';}).forEach(function(t){
-        var sh=(parseInt(t.contracts)||1)*100;
-        var putStrike=parseFloat(t.strike)||0;
-        var prem=(parseFloat(t.premium)||0)*(parseInt(t.contracts)||1)*100;
-        var fees=parseFloat(t.openFees)||0;
-        var cb=putStrike-(prem-fees)/sh;
-        _setLots.push({shares:sh,strike:putStrike,costBasis:cb,date:cd(t)||t.expDate||''});
-      });
-      // Merge manual longs BEFORE call processing so assigned calls consume them in date order (FIFO)
-      longs.filter(function(l){return l.ticker===ticker&&l.shares&&l.price&&!l.calledAway&&(parseInt(l.set)||1)===s;}).forEach(function(l){
-        _setLots.push({shares:parseFloat(l.shares)||0,strike:parseFloat(l.price)||0,costBasis:parseFloat(l.price)||0,date:l.date||''});
-      });
-      _setLots.sort(function(a,b){return new Date(a.date||0)-new Date(b.date||0);});
-      setTrades.filter(function(t){return t.type==='C'&&t.assigned==='Yes';}).forEach(function(t){
-        var callStrike=parseFloat(t.strike)||0;
-        var toRemove=(parseInt(t.contracts)||1)*100;
-        for(var _j=0;_j<_setLots.length&&toRemove>0;_j++){
-          var sharesRemoved=Math.min(_setLots[_j].shares,toRemove);
-          _setCalledAwayAppreciation+=(callStrike-_setLots[_j].costBasis)*sharesRemoved;
-          if(_setLots[_j].shares<=toRemove){toRemove-=_setLots[_j].shares;_setLots[_j].shares=0;}
-          else{_setLots[_j].shares-=toRemove;toRemove=0;}
-        }
-        _setLots=_setLots.filter(function(l){return l.shares>0;});
-      });
-      var _setShares=_setLots.reduce(function(sm,l){return sm+l.shares;},0);
-      var _setInvested=_setLots.reduce(function(sm,l){return sm+l.shares*l.costBasis;},0);
-      var _setCostBasis=_setShares>0?_setInvested/_setShares:0;
-      var _setAppreciation=(currentPrice!=null&&_setShares>0)?(currentPrice-_setCostBasis)*_setShares:0;
+      // Per-set totals from the shared ledger (put-strike basis, matches Dashboard)
+      var _L=_wheelLedger(ticker,s);
+      var _setAppreciation=(currentPrice!=null&&_L.sharesHeld>0)?(currentPrice-_L.avgCost)*_L.sharesHeld:0;
+      var _setCalledAwayAppreciation=_L.shareGain;
       var setTotal=setTotalPrem+_setAppreciation+_setCalledAwayAppreciation;
       var plLabel=(setTotal>=0?'+':'')+fm(setTotal);
       var plCls=setTotal>=0?'tg':'tr';
@@ -4459,44 +4581,14 @@ function showWheelDetails(ticker, isUpdate, filterSet){
       </div>
     </div>`;
 
-  // ── B: Full Wheel P&L Waterfall
-  const wdInv={lots:[],calledAway:[]};
-  ts.filter(t=>t.type==='P'&&t.assigned==='Yes').forEach(t=>{
-    const shares=(parseInt(t.contracts)||1)*100;
-    const strike=parseFloat(t.strike)||0;
-    const prem=(parseFloat(t.premium)||0)*(parseInt(t.contracts)||1)*100;
-    const fees=parseFloat(t.openFees)||0;
-    const cb=strike-(prem-fees)/shares;
-    wdInv.lots.push({shares,strike,costBasis:cb,premiumPut:prem,openFees:fees,id:t.id});
-  });
-  // Seed Long positions for this set so covered call assignment captures their share appreciation
-  longsForFilter.forEach(l=>{
-    const sh=parseFloat(l.shares)||0;
-    const price=parseFloat(l.price)||0;
-    if(sh>0&&price>0) wdInv.lots.push({shares:sh,strike:price,costBasis:price,premiumPut:0,openFees:0,id:'long-'+(l.date||''),lotType:'long'});
-  });
-  ts.filter(t=>t.type==='C'&&t.assigned==='Yes').forEach(t=>{
-    const callStrike=parseFloat(t.strike)||0;
-    const premiumCall=(parseFloat(t.premium)||0)*(parseInt(t.contracts)||1)*100;
-    const callFees=(parseFloat(t.openFees)||0)+(parseFloat(t.closeFees)||0);
-    let toRemove=(parseInt(t.contracts)||1)*100;
-    wdInv.lots=[...wdInv.lots].map(lot=>{
-      if(toRemove<=0) return lot;
-      if(lot.shares<=toRemove){
-        wdInv.calledAway.push({...lot,callStrike,premiumCall,callFees});
-        toRemove-=lot.shares; return null;
-      } else {
-        wdInv.calledAway.push({...lot,shares:toRemove,callStrike,premiumCall,callFees});
-        toRemove=0; return {...lot,shares:lot.shares-toRemove};
-      }
-    }).filter(Boolean);
-  });
-  const wPutPrem=ts.filter(t=>t.type==='P'&&cd(t)).reduce((s,t)=>s+(calcPL(t)||0),0);
-  const wCallPrem=ts.filter(t=>t.type==='C'&&cd(t)).reduce((s,t)=>s+(calcPL(t)||0),0);
-  const wOpenPrem=ts.filter(t=>!cd(t)).reduce((s,t)=>s+(parseFloat(t.premium)||0)*(parseInt(t.contracts)||1)*100-(parseFloat(t.openFees)||0),0);
-  const wAppreciation=wdInv.calledAway.reduce((s,l)=>s+(l.callStrike-l.costBasis)*l.shares,0);
+  // ── B: Full Wheel P&L Waterfall (shared ledger — put-strike basis, matches Dashboard)
+  const _WL=_wheelLedger(ticker,activeSetFilter);
+  const wPutPrem=_WL.realizedPut;
+  const wCallPrem=_WL.realizedCall;
+  const wOpenPrem=_WL.openPrem;
+  const wAppreciation=_WL.shareGain;
   const wTotal=wPutPrem+wCallPrem+wOpenPrem+wAppreciation;
-  const hasCalledAway=wdInv.calledAway.length>0;
+  const hasCalledAway=_WL.calledAwayShares>0;
   const wfMax=Math.max(Math.abs(wPutPrem),Math.abs(wCallPrem),Math.abs(wAppreciation),Math.abs(wOpenPrem),0.01);
   const wfBar=val=>{
     const pct=Math.min(100,Math.abs(val)/wfMax*100);
@@ -4519,7 +4611,7 @@ function showWheelDetails(ticker, isUpdate, filterSet){
       ${wfRow('Call Premium', wCallPrem, 'closed & assigned calls, net of fees')}
       ${wfRow('Open Premium', wOpenPrem, 'unrealized — open positions')}
       ${hasCalledAway
-        ? wfRow('Share Appreciation', wAppreciation, `${wdInv.calledAway.length} lot${wdInv.calledAway.length!==1?'s':''} — call strike above cost basis`)
+        ? wfRow('Share Appreciation', wAppreciation, `${_WL.calledAwayShares.toLocaleString()} shares called away — call strike vs put strike`)
         : `<div style="padding:10px 16px;border-bottom:1px solid var(--border);display:grid;grid-template-columns:170px 1fr 120px;gap:12px;align-items:center;"><div><div style="font-size:11px;color:var(--text3);">Share Appreciation</div><div style="font-size:10px;color:var(--text3);margin-top:1px;">no shares called away yet</div></div><div></div><span style="font-size:13px;font-weight:700;text-align:right;color:var(--text3);">—</span></div>`
       }
       <div style="display:grid;grid-template-columns:170px 1fr 120px;align-items:center;gap:12px;padding:12px 16px;background:var(--surface2);">
@@ -5405,76 +5497,6 @@ document.addEventListener('click',e=>{
   if(!activeLongCell) return;
   if(!activeLongCell.contains(e.target)) deactivateLongCell();
 });
-let tickerSort={col:null, dir:1}; // col: 'ticker'|'realized'|'unreal'|'wr'|'trades', dir: 1=desc -1=asc (asc for ticker)
-
-function sortTickerBy(col){
-  if(tickerSort.col===col){
-    if(col==='ticker'){
-      // ticker: default -> asc -> desc -> default
-      if(tickerSort.dir===1) tickerSort.dir=-1;
-      else { tickerSort.col=null; tickerSort.dir=1; }
-    } else {
-      // numeric: desc -> asc -> default
-      if(tickerSort.dir===1) tickerSort.dir=-1;
-      else { tickerSort.col=null; tickerSort.dir=1; }
-    }
-  } else {
-    tickerSort.col=col;
-    tickerSort.dir=1; // first click: desc for numbers, asc for ticker
-  }
-  renderTickerTable();
-}
-
-function renderTickerTable(){
-  const wrap=document.getElementById('ticker-table-wrap');
-  if(!wrap) return;
-
-  const tickers=[...new Set(trades.map(t=>t.ticker).filter(Boolean))];
-  let rows=tickers.map(ticker=>{
-    const tt=trades.filter(t=>t.ticker===ticker),cl2=tt.filter(t=>cd(t));
-    const wins=cl2.filter(t=>(calcPL(t)||0)>0).length;
-    const realized=cl2.reduce((s,t)=>s+(calcPL(t)||0),0);
-    const unreal=tt.filter(t=>!cd(t)).reduce((s,t)=>s+(parseFloat(t.premium)||0)*(parseInt(t.contracts)||1)*100-(parseFloat(t.openFees)||0),0);
-    const wr=cl2.length?wins/cl2.length*100:null;
-    return {ticker,realized,unreal,wr,trades:tt.length,wrDisplay:wr!=null?Math.round(wr)+'%':'—'};
-  });
-
-  if(tickerSort.col){
-    rows.sort((a,b)=>{
-      const col=tickerSort.col, d=tickerSort.dir;
-      if(col==='ticker') return d===1?a.ticker.localeCompare(b.ticker):b.ticker.localeCompare(a.ticker);
-      const av=a[col]??-Infinity, bv=b[col]??-Infinity;
-      return d===1?bv-av:av-bv;
-    });
-  }
-
-  const thStyle='padding:9px 13px;text-align:left;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3);border-bottom:1px solid var(--border);font-weight:400;white-space:nowrap;cursor:pointer;user-select:none;background:var(--surface2);transition:color .15s;';
-  const thActive='color:var(--green);';
-
-  function thArrow(col){
-    if(tickerSort.col!==col) return ' <span style="opacity:.3;">↕</span>';
-    return tickerSort.dir===1?' <span style="color:var(--green);">↓</span>':' <span style="color:var(--green);">↑</span>';
-  }
-
-  const thead=`<thead><tr>
-    <th style="${thStyle}${tickerSort.col==='ticker'?thActive:''}" onclick="sortTickerBy('ticker')">Ticker${thArrow('ticker')}</th>
-    <th style="${thStyle}${tickerSort.col==='realized'?thActive:''}" onclick="sortTickerBy('realized')">Realized${thArrow('realized')}</th>
-    <th style="${thStyle}${tickerSort.col==='unreal'?thActive:''}" onclick="sortTickerBy('unreal')">Unrealized${thArrow('unreal')}</th>
-    <th style="${thStyle}${tickerSort.col==='wr'?thActive:''}" onclick="sortTickerBy('wr')">Win %${thArrow('wr')}</th>
-    <th style="${thStyle}${tickerSort.col==='trades'?thActive:''}" onclick="sortTickerBy('trades')">Trades${thArrow('trades')}</th>
-  </tr></thead>`;
-
-  const tbody=rows.map(r=>`<tr>
-    <td><span class="ticker">${r.ticker}</span></td>
-    <td class="${r.realized>=0?'tg':'tr'}">${fm(r.realized)}</td>
-    <td class="${r.unreal>=0?'tg':'tr'}">${fm(r.unreal)}</td>
-    <td>${r.wrDisplay}</td>
-    <td class="td">${r.trades}</td>
-  </tr>`).join('')||`<tr><td colspan="5" class="td" style="padding:16px;text-align:center;">No data</td></tr>`;
-
-  wrap.innerHTML=`<table style="width:100%;border-collapse:collapse;">${thead}<tbody>${tbody}</tbody></table>`;
-}
-
 let pnlChartMode='total'; // total|premium|pl
 function setPnlChartMode(m,btn){
   pnlChartMode=m;
@@ -5588,7 +5610,6 @@ function renderPnL(){
     <div class="stat-card"><div class="stat-label">Total Fees</div><div class="stat-val r">${fm(totalFees)}</div></div>
     <div class="stat-card" style="grid-column:span 2;"><div class="stat-label">Share Appreciation (Called Away)</div><div class="stat-val ${totalShareAppreciation>=0?'g':'r'}">${fm(totalShareAppreciation)}</div><div class="stat-sub">${calledAwayCount} lot${calledAwayCount!==1?'s':''} called away · capital gain vs. strike cost basis (premium counted in Realized P&L)</div></div>`;
   renderMonthly('pnl-monthly');
-  renderTickerTable();
   const puts=trades.filter(t=>t.type==='P'),calls=trades.filter(t=>t.type==='C');
   const pPL=puts.filter(t=>cd(t)).reduce((s,t)=>s+(calcPL(t)||0),0);
   const cPL=calls.filter(t=>cd(t)).reduce((s,t)=>s+(calcPL(t)||0),0);
